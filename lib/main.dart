@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -56,16 +57,18 @@ class OrgMembership {
   });
 }
 
-// Model for dynamic evaluation form questions
+// Model for dynamic evaluation form questions (Google Forms schema)
 class FormQuestion {
   String title;
   String type; // 'linear_scale', 'multiple_choice', 'paragraph'
   List<String> options;
+  bool isRequired;
 
   FormQuestion({
     required this.title,
     this.type = 'linear_scale',
     List<String>? options,
+    this.isRequired = true,
   }) : options = options ?? [];
 
   FormQuestion clone() {
@@ -73,6 +76,7 @@ class FormQuestion {
       title: title,
       type: type,
       options: List<String>.from(options),
+      isRequired: isRequired,
     );
   }
 }
@@ -105,7 +109,7 @@ class CampusAnnouncement {
   bool isEnded; // True if the event has concluded (Verification requirement!)
   bool isApproved;
   final String approvalStatus;
-  List<FormQuestion> evaluationQuestions; // Configurable form questions!
+  List<FormQuestion> evaluationQuestions; // Custom evaluation form questions!
   int attendeesCount;
   double averageRating;
   List<String> attendeeFeedbackList;
@@ -935,7 +939,6 @@ class _MainAppShellState extends State<MainAppShell> {
   @override
   void initState() {
     super.initState();
-    // DEFAULT FILTER: Set to user's college department by default
     _selectedCollegeFilter = widget.user.college == 'University-Wide'
         ? 'All'
         : widget.user.college;
@@ -996,7 +999,6 @@ class _MainAppShellState extends State<MainAppShell> {
     );
   }
 
-  // Pending evaluations: Attended events that have ENDED and haven't had survey submitted yet
   List<CampusAnnouncement> _getPendingEvaluations() {
     return widget.announcements.where((a) {
       return a.isEvent &&
@@ -1006,7 +1008,6 @@ class _MainAppShellState extends State<MainAppShell> {
     }).toList();
   }
 
-  // Upcoming events
   List<CampusAnnouncement> _getUpcomingEvents() {
     return widget.announcements.where((a) {
       if (!a.isApproved) return false;
@@ -1443,7 +1444,6 @@ class _MainAppShellState extends State<MainAppShell> {
             ),
             const SizedBox(height: 16),
           ] else ...[
-            // Department Filter Chips (Defaulted to user's college)
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -2101,10 +2101,24 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
       appBar: AppBar(
         title: Text(widget.org.orgName, style: const TextStyle(fontSize: 15)),
       ),
+      // OPENS FULL SCREEN CreatePostScreen!
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: maroonColor,
         foregroundColor: Colors.white,
-        onPressed: _openCreatePostDialog,
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CreatePostScreen(
+                user: widget.user,
+                org: widget.org,
+                savedTemplates: widget.savedTemplates,
+                onAddAnnouncement: widget.onAddAnnouncement,
+                onSaveQuestionTemplate: widget.onSaveQuestionTemplate,
+              ),
+            ),
+          );
+        },
         icon: const Icon(Icons.add),
         label: const Text('Create Post / Notice'),
       ),
@@ -2391,350 +2405,407 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
       ),
     );
   }
+}
 
-  // INTERACTIVE FORM BUILDER & EVENT POST DIALOG
-  void _openCreatePostDialog() {
-    const maroonColor = Color(0xFF7A0C16);
+// -------------------------------------------------------------
+// 4. FULL SCREEN POST CREATION SCREEN
+// -------------------------------------------------------------
 
-    bool isEventPost = true;
-    final titleCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
-    final venueCtrl = TextEditingController();
-    final dateCtrl = TextEditingController();
-    String target = widget.org.orgId == 'ssc' ? 'All' : widget.org.collegeAffiliation;
+class CreatePostScreen extends StatefulWidget {
+  final UserAccount user;
+  final OrgMembership org;
+  final List<QuestionSetTemplate> savedTemplates;
+  final ValueChanged<CampusAnnouncement> onAddAnnouncement;
+  final ValueChanged<QuestionSetTemplate> onSaveQuestionTemplate;
 
-    // Active questions list in form builder (starts pre-populated with default template)
-    List<FormQuestion> builderQuestions = widget.savedTemplates.isNotEmpty
+  const CreatePostScreen({
+    super.key,
+    required this.user,
+    required this.org,
+    required this.savedTemplates,
+    required this.onAddAnnouncement,
+    required this.onSaveQuestionTemplate,
+  });
+
+  @override
+  State<CreatePostScreen> createState() => _CreatePostScreenState();
+}
+
+class _CreatePostScreenState extends State<CreatePostScreen> {
+  bool _isEventPost = true;
+  final _titleCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  final _venueCtrl = TextEditingController();
+  final _dateCtrl = TextEditingController();
+  late String _target;
+
+  // Active questions list in form builder
+  late List<FormQuestion> _evaluationQuestions;
+
+  @override
+  void initState() {
+    super.initState();
+    _target = widget.org.orgId == 'ssc' ? 'All' : widget.org.collegeAffiliation;
+    // Default form questions from academic seminar template
+    _evaluationQuestions = widget.savedTemplates.isNotEmpty
         ? widget.savedTemplates[0].questions.map((q) => q.clone()).toList()
         : [
             FormQuestion(title: 'Overall satisfaction with this activity', type: 'linear_scale'),
-            FormQuestion(
-              title: 'Relevance to academic or career goals',
-              type: 'multiple_choice',
-              options: ['Very High', 'Moderate', 'Low'],
-            ),
+            FormQuestion(title: 'Relevance to academic or career goals', type: 'multiple_choice', options: ['High', 'Medium', 'Low']),
           ];
+  }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Create New Post / Notice', style: TextStyle(fontSize: 16)),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Select Post Type:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  const SizedBox(height: 4),
-                  Row(
+  void _openFormBuilder() async {
+    final result = await Navigator.push<List<FormQuestion>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FormBuilderScreen(
+          initialQuestions: _evaluationQuestions,
+          savedTemplates: widget.savedTemplates,
+          onSaveQuestionTemplate: widget.onSaveQuestionTemplate,
+          eventTitle: _titleCtrl.text.trim().isNotEmpty ? _titleCtrl.text.trim() : 'Event Evaluation Form',
+        ),
+      ),
+    );
+
+    if (result != null) {
+      if (!mounted) return;
+      setState(() {
+        _evaluationQuestions = result;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Form updated: ${_evaluationQuestions.length} questions saved')),
+      );
+    }
+  }
+
+  void _submit() {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a title.')),
+      );
+      return;
+    }
+
+    final newAnn = CampusAnnouncement(
+      id: 'post-${DateTime.now().millisecondsSinceEpoch}',
+      title: title,
+      description: _descCtrl.text.trim(),
+      orgId: widget.org.orgId,
+      orgName: widget.org.orgName,
+      targetAudience: _target,
+      venue: _isEventPost ? _venueCtrl.text.trim() : '',
+      dateTime: _isEventPost ? _dateCtrl.text.trim() : '',
+      bannerCategory: _isEventPost ? 'tech' : 'assembly',
+      isEvent: _isEventPost,
+      isApproved: widget.org.orgId == 'ssc',
+      approvalStatus: widget.org.orgId == 'ssc'
+          ? 'Cleared by Mother Org'
+          : 'Pending Mother Org Clearance',
+      evaluationQuestions: _isEventPost ? _evaluationQuestions : [],
+      attendeesCount: 0,
+      averageRating: 0.0,
+      attendeeFeedbackList: [],
+      recordedResponses: [],
+    );
+
+    widget.onAddAnnouncement(newAnn);
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(widget.org.orgId == 'ssc'
+            ? 'Event Published with Custom Evaluation Form!'
+            : 'Post Submitted for Mother Org Clearance!'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const maroonColor = Color(0xFF7A0C16);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Create New Notice / Post', style: TextStyle(fontSize: 16)),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Post Type Toggle
+            const Text('Post Classification', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: ChoiceChip(
+                    label: const Text('Normal Announcement'),
+                    selected: !_isEventPost,
+                    selectedColor: maroonColor,
+                    labelStyle: TextStyle(color: !_isEventPost ? Colors.white : Colors.black87, fontWeight: FontWeight.bold),
+                    onSelected: (_) => setState(() => _isEventPost = false),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ChoiceChip(
+                    label: const Text('Event Announcement'),
+                    selected: _isEventPost,
+                    selectedColor: maroonColor,
+                    labelStyle: TextStyle(color: _isEventPost ? Colors.white : Colors.black87, fontWeight: FontWeight.bold),
+                    onSelected: (_) => setState(() => _isEventPost = true),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+
+            TextField(
+              controller: _titleCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Post Title',
+                hintText: 'e.g. CICT Tech Summit & Innovation Showcase',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            TextField(
+              controller: _descCtrl,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Overview / Description',
+                hintText: 'Enter complete event brief, mechanics, or advisories...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            DropdownButtonFormField<String>(
+              initialValue: _target,
+              decoration: const InputDecoration(
+                labelText: 'Target Audience Scope',
+                border: OutlineInputBorder(),
+              ),
+              items: ['All', 'CICT', 'CBA', 'CET', 'CAS'].map((col) {
+                return DropdownMenuItem(value: col, child: Text(col == 'All' ? 'All Campuses (University-Wide)' : '$col Department'));
+              }).toList(),
+              onChanged: (val) {
+                if (val != null) setState(() => _target = val);
+              },
+            ),
+            const SizedBox(height: 18),
+
+            // EVENT ONLY SECTION: VENUE, DATE & EVALUATION FORM BUILDER
+            if (_isEventPost) ...[
+              const Text('Event Logistics', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _venueCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Event Venue',
+                  hintText: 'e.g. TCU Main Auditorium / Computer Lab 3',
+                  prefixIcon: Icon(Icons.location_on_outlined, color: maroonColor),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _dateCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Date & Time Schedule',
+                  hintText: 'e.g. November 24, 2026 | 9:00 AM – 3:00 PM',
+                  prefixIcon: Icon(Icons.calendar_today_outlined, color: maroonColor),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // DEDICATED GOOGLE FORMS MAKER CARD
+              Card(
+                elevation: 2,
+                color: const Color(0xFFFBF8FF),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: const BorderSide(color: Color(0xFF673AB7), width: 1.2),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(18.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: ChoiceChip(
-                          label: const Text('Normal Notice'),
-                          selected: !isEventPost,
-                          selectedColor: maroonColor,
-                          labelStyle: TextStyle(color: !isEventPost ? Colors.white : Colors.black87, fontSize: 11),
-                          onSelected: (_) => setDialogState(() => isEventPost = false),
-                        ),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF673AB7).withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(Icons.assignment, color: Color(0xFF673AB7), size: 24),
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Post-Event Evaluation Form',
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF673AB7)),
+                                ),
+                                Text(
+                                  'Google Forms style builder with custom questions & choices',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ChoiceChip(
-                          label: const Text('Event Notice'),
-                          selected: isEventPost,
-                          selectedColor: maroonColor,
-                          labelStyle: TextStyle(color: isEventPost ? Colors.white : Colors.black87, fontSize: 11),
-                          onSelected: (_) => setDialogState(() => isEventPost = true),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Currently configured: ${_evaluationQuestions.length} Questions',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 6,
+                        children: _evaluationQuestions.map((q) {
+                          String typeLabel = q.type == 'linear_scale'
+                              ? 'Linear Scale (1-5)'
+                              : q.type == 'multiple_choice'
+                                  ? 'Multiple Choice (${q.options.length} options)'
+                                  : 'Paragraph';
+                          return Chip(
+                            backgroundColor: Colors.white,
+                            label: Text(typeLabel, style: const TextStyle(fontSize: 11)),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF673AB7),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          onPressed: _openFormBuilder,
+                          icon: const Icon(Icons.edit_note, size: 20),
+                          label: const Text('Open Form Maker Screen (Full Editor)', style: TextStyle(fontWeight: FontWeight.bold)),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-
-                  TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder())),
-                  const SizedBox(height: 10),
-                  TextField(controller: descCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Description / Guidelines', border: OutlineInputBorder())),
-                  const SizedBox(height: 10),
-
-                  if (isEventPost) ...[
-                    TextField(controller: venueCtrl, decoration: const InputDecoration(labelText: 'Venue (e.g. TCU Gymnasium)', border: OutlineInputBorder())),
-                    const SizedBox(height: 10),
-                    TextField(controller: dateCtrl, decoration: const InputDecoration(labelText: 'Date & Time', border: OutlineInputBorder())),
-                    const SizedBox(height: 14),
-
-                    // --- ACTUAL FORM MAKER SECTION ---
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: maroonColor.withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: maroonColor.withValues(alpha: 0.2)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.dynamic_form, color: maroonColor, size: 20),
-                              SizedBox(width: 6),
-                              Text('Evaluation Form Builder', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: maroonColor)),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-
-                          // Quick Template Selector
-                          const Text('Quick-Load Saved Template:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
-                          const SizedBox(height: 4),
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: widget.savedTemplates.map((tpl) {
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 6.0),
-                                  child: ActionChip(
-                                    avatar: const Icon(Icons.bookmark_border, size: 14),
-                                    label: Text(tpl.name, style: const TextStyle(fontSize: 11)),
-                                    onPressed: () {
-                                      setDialogState(() {
-                                        builderQuestions = tpl.questions.map((q) => q.clone()).toList();
-                                      });
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text('Loaded template: ${tpl.name}')),
-                                      );
-                                    },
-                                  ),
-                                );
-                              }).toList(),
-                            ),
-                          ),
-                          const Divider(height: 18),
-
-                          // Current Questions List
-                          Text('Form Questions (${builderQuestions.length}):', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                          const SizedBox(height: 8),
-
-                          ...builderQuestions.asMap().entries.map((entry) {
-                            final idx = entry.key;
-                            final q = entry.value;
-
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              elevation: 1,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              child: Padding(
-                                padding: const EdgeInsets.all(10.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text('Q${idx + 1}', style: const TextStyle(fontWeight: FontWeight.bold, color: maroonColor)),
-                                        const SizedBox(width: 6),
-                                        Expanded(
-                                          child: TextFormField(
-                                            initialValue: q.title,
-                                            decoration: const InputDecoration(
-                                              isDense: true,
-                                              hintText: 'Type question here...',
-                                              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                              border: OutlineInputBorder(),
-                                            ),
-                                            onChanged: (val) => q.title = val,
-                                          ),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
-                                          onPressed: () {
-                                            setDialogState(() {
-                                              builderQuestions.removeAt(idx);
-                                            });
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Row(
-                                      children: [
-                                        const Text('Type: ', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                                        DropdownButton<String>(
-                                          value: q.type,
-                                          isDense: true,
-                                          style: const TextStyle(fontSize: 12, color: Colors.black87),
-                                          items: const [
-                                            DropdownMenuItem(value: 'linear_scale', child: Text('Linear Scale (1-5)')),
-                                            DropdownMenuItem(value: 'multiple_choice', child: Text('Multiple Choice')),
-                                            DropdownMenuItem(value: 'paragraph', child: Text('Paragraph Feedback')),
-                                          ],
-                                          onChanged: (newType) {
-                                            if (newType != null) {
-                                              setDialogState(() {
-                                                q.type = newType;
-                                                if (newType == 'multiple_choice' && q.options.isEmpty) {
-                                                  q.options = ['Option 1', 'Option 2'];
-                                                }
-                                              });
-                                            }
-                                          },
-                                        ),
-                                      ],
-                                    ),
-
-                                    // Multiple Choice Options Builder
-                                    if (q.type == 'multiple_choice') ...[
-                                      const SizedBox(height: 6),
-                                      const Text('Choices:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                                      ...q.options.asMap().entries.map((optEntry) {
-                                        final optIdx = optEntry.key;
-                                        return Padding(
-                                          padding: const EdgeInsets.only(top: 4.0),
-                                          child: Row(
-                                            children: [
-                                              const Icon(Icons.radio_button_unchecked, size: 12, color: Colors.grey),
-                                              const SizedBox(width: 6),
-                                              Expanded(
-                                                child: TextFormField(
-                                                  initialValue: q.options[optIdx],
-                                                  style: const TextStyle(fontSize: 11.5),
-                                                  decoration: const InputDecoration(
-                                                    isDense: true,
-                                                    contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                                                    border: OutlineInputBorder(),
-                                                  ),
-                                                  onChanged: (newOpt) => q.options[optIdx] = newOpt,
-                                                ),
-                                              ),
-                                              InkWell(
-                                                onTap: () {
-                                                  setDialogState(() => q.options.removeAt(optIdx));
-                                                },
-                                                child: const Padding(
-                                                  padding: EdgeInsets.all(4.0),
-                                                  child: Icon(Icons.close, size: 14, color: Colors.grey),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        );
-                                      }),
-                                      TextButton.icon(
-                                        onPressed: () {
-                                          setDialogState(() {
-                                            q.options.add('New Option ${q.options.length + 1}');
-                                          });
-                                        },
-                                        icon: const Icon(Icons.add, size: 14, color: maroonColor),
-                                        label: const Text('Add Choice', style: TextStyle(fontSize: 11, color: maroonColor)),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            );
-                          }),
-
-                          // Add Question Button
-                          Row(
-                            children: [
-                              OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                  side: const BorderSide(color: maroonColor),
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                ),
-                                onPressed: () {
-                                  setDialogState(() {
-                                    builderQuestions.add(
-                                      FormQuestion(
-                                        title: 'New Evaluation Question',
-                                        type: 'linear_scale',
-                                      ),
-                                    );
-                                  });
-                                },
-                                icon: const Icon(Icons.add, size: 16, color: maroonColor),
-                                label: const Text('Add Question', style: TextStyle(fontSize: 11.5, color: maroonColor)),
-                              ),
-                              const Spacer(),
-                              // Save as Template Button
-                              TextButton.icon(
-                                onPressed: () => _openSaveTemplateDialog(builderQuestions),
-                                icon: const Icon(Icons.bookmark_add, size: 16, color: maroonColor),
-                                label: const Text('Save Set as Template', style: TextStyle(fontSize: 11, color: maroonColor)),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-
-                  Text(
-                    'Audience: $target (Restricted to your authority)',
-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              const SizedBox(height: 20),
+            ],
+
+            // Submit Post Button
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: maroonColor,
                 foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
-              onPressed: () {
-                if (titleCtrl.text.isEmpty) return;
-                final newAnn = CampusAnnouncement(
-                  id: 'post-${DateTime.now().millisecondsSinceEpoch}',
-                  title: titleCtrl.text.trim(),
-                  description: descCtrl.text.trim(),
-                  orgId: widget.org.orgId,
-                  orgName: widget.org.orgName,
-                  targetAudience: target,
-                  venue: isEventPost ? venueCtrl.text.trim() : '',
-                  dateTime: isEventPost ? dateCtrl.text.trim() : '',
-                  bannerCategory: isEventPost ? 'tech' : 'assembly',
-                  isEvent: isEventPost,
-                  isApproved: widget.org.orgId == 'ssc',
-                  approvalStatus: widget.org.orgId == 'ssc'
-                      ? 'Cleared by Mother Org'
-                      : 'Pending Mother Org Clearance',
-                  evaluationQuestions: isEventPost ? builderQuestions : [],
-                  attendeesCount: 0,
-                  averageRating: 0.0,
-                  attendeeFeedbackList: [],
-                  recordedResponses: [],
-                );
-                widget.onAddAnnouncement(newAnn);
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(widget.org.orgId == 'ssc'
-                        ? 'Event Published with Custom Evaluation Form!'
-                        : 'Post Submitted for Mother Org Clearance!'),
-                  ),
-                );
-              },
-              child: const Text('Submit for Approval'),
+              onPressed: _submit,
+              child: const Text('Submit Post for Mother Org Approval', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
             ),
+            const SizedBox(height: 24),
           ],
         ),
       ),
     );
   }
+}
 
-  void _openSaveTemplateDialog(List<FormQuestion> questions) {
+// -------------------------------------------------------------
+// 5. FULL SCREEN GOOGLE FORMS MAKER (DEDICATED EDITOR SCREEN)
+// -------------------------------------------------------------
+
+class FormBuilderScreen extends StatefulWidget {
+  final List<FormQuestion> initialQuestions;
+  final List<QuestionSetTemplate> savedTemplates;
+  final ValueChanged<QuestionSetTemplate> onSaveQuestionTemplate;
+  final String eventTitle;
+
+  const FormBuilderScreen({
+    super.key,
+    required this.initialQuestions,
+    required this.savedTemplates,
+    required this.onSaveQuestionTemplate,
+    required this.eventTitle,
+  });
+
+  @override
+  State<FormBuilderScreen> createState() => _FormBuilderScreenState();
+}
+
+class _FormBuilderScreenState extends State<FormBuilderScreen> {
+  late List<FormQuestion> _questions;
+  int _activeQuestionIndex = 0;
+  final _formTitleController = TextEditingController();
+  final _formDescController = TextEditingController(
+    text: 'Please answer this evaluation form honestly. Your truthful feedback will be used to enhance student programming and verify your attendance clearance.',
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _formTitleController.text = '${widget.eventTitle} - Post-Event Evaluation';
+    _questions = widget.initialQuestions.map((q) => q.clone()).toList();
+  }
+
+  void _addQuestion() {
+    setState(() {
+      _questions.add(
+        FormQuestion(
+          title: 'Untitled Question',
+          type: 'linear_scale',
+          options: ['Option 1', 'Option 2'],
+        ),
+      );
+      _activeQuestionIndex = _questions.length - 1;
+    });
+  }
+
+  void _duplicateQuestion(int index) {
+    setState(() {
+      final copy = _questions[index].clone();
+      copy.title = '${copy.title} (Copy)';
+      _questions.insert(index + 1, copy);
+      _activeQuestionIndex = index + 1;
+    });
+  }
+
+  void _deleteQuestion(int index) {
+    if (_questions.length <= 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A form must have at least one question.')),
+      );
+      return;
+    }
+    setState(() {
+      _questions.removeAt(index);
+      if (_activeQuestionIndex >= _questions.length) {
+        _activeQuestionIndex = _questions.length - 1;
+      }
+    });
+  }
+
+  void _openSaveTemplateDialog() {
     const maroonColor = Color(0xFF7A0C16);
-    final nameCtrl = TextEditingController(text: '${widget.org.orgName} Custom Form');
+    final nameCtrl = TextEditingController(text: '${widget.eventTitle} Template');
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Save Question Set Template', style: TextStyle(fontSize: 15)),
+        title: const Text('Save Question Set Template', style: TextStyle(fontSize: 16)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2743,7 +2814,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
               'Save this question set with its types and choices for future organization events.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             TextField(
               controller: nameCtrl,
               decoration: const InputDecoration(labelText: 'Template Name', border: OutlineInputBorder()),
@@ -2759,12 +2830,12 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
               final tpl = QuestionSetTemplate(
                 id: 'tpl-${DateTime.now().millisecondsSinceEpoch}',
                 name: nameCtrl.text.trim(),
-                questions: questions.map((q) => q.clone()).toList(),
+                questions: _questions.map((q) => q.clone()).toList(),
               );
               widget.onSaveQuestionTemplate(tpl);
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Saved template "${nameCtrl.text.trim()}"! Available for all future events.')),
+                SnackBar(content: Text('Saved template "${nameCtrl.text.trim()}" for all future events!')),
               );
             },
             child: const Text('Save Template'),
@@ -2773,10 +2844,359 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
       ),
     );
   }
+
+  void _showLoadTemplateModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Load Saved Question Set Template', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text('Select a template to replace current form questions:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 12),
+            Expanded(
+              child: ListView.builder(
+                itemCount: widget.savedTemplates.length,
+                itemBuilder: (_, idx) {
+                  final tpl = widget.savedTemplates[idx];
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: const Icon(Icons.bookmark_border, color: Color(0xFF673AB7)),
+                      title: Text(tpl.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      subtitle: Text('${tpl.questions.length} questions included', style: const TextStyle(fontSize: 11)),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        setState(() {
+                          _questions = tpl.questions.map((q) => q.clone()).toList();
+                          _activeQuestionIndex = 0;
+                        });
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Loaded question set: ${tpl.name}')),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const maroonColor = Color(0xFF7A0C16);
+    const gformBg = Color(0xFFEDE7F6);
+
+    return Scaffold(
+      backgroundColor: gformBg,
+      appBar: AppBar(
+        title: const Text('Evaluation Form Maker', style: TextStyle(fontSize: 16)),
+        actions: [
+          IconButton(
+            tooltip: 'Load Saved Template',
+            icon: const Icon(Icons.bookmarks_outlined),
+            onPressed: _showLoadTemplateModal,
+          ),
+          IconButton(
+            tooltip: 'Save as Template',
+            icon: const Icon(Icons.save_as_outlined),
+            onPressed: _openSaveTemplateDialog,
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, _questions),
+            child: const Text('Save Form', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 6, offset: const Offset(0, -2)),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: maroonColor,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: _addQuestion,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add Question'),
+            ),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(side: const BorderSide(color: maroonColor)),
+              onPressed: _showLoadTemplateModal,
+              icon: const Icon(Icons.folder_open, size: 18, color: maroonColor),
+              label: const Text('Load Template', style: TextStyle(color: maroonColor)),
+            ),
+          ],
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(14.0),
+        child: Column(
+          children: [
+            // 1. GOOGLE FORMS HEADER CARD
+            Card(
+              elevation: 1,
+              color: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 10,
+                    decoration: const BoxDecoration(
+                      color: maroonColor,
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(18.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFormField(
+                          controller: _formTitleController,
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                          decoration: const InputDecoration(
+                            border: UnderlineInputBorder(),
+                            hintText: 'Form Title',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextFormField(
+                          controller: _formDescController,
+                          maxLines: 2,
+                          style: const TextStyle(fontSize: 12.5, color: Colors.black87),
+                          decoration: const InputDecoration(
+                            border: UnderlineInputBorder(),
+                            hintText: 'Form description',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // 2. DYNAMIC GOOGLE FORMS QUESTION CARDS
+            ..._questions.asMap().entries.map((entry) {
+              final idx = entry.key;
+              final q = entry.value;
+              final isActive = idx == _activeQuestionIndex;
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 14),
+                elevation: isActive ? 3 : 1,
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(
+                    color: isActive ? maroonColor : Colors.grey.shade300,
+                    width: isActive ? 1.8 : 0.8,
+                  ),
+                ),
+                child: InkWell(
+                  onTap: () => setState(() => _activeQuestionIndex = idx),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Question Header Row: Title input + Type selector
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Q${idx + 1}',
+                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: maroonColor),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: q.title,
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                                decoration: const InputDecoration(
+                                  hintText: 'Question title',
+                                  isDense: true,
+                                  border: UnderlineInputBorder(),
+                                ),
+                                onChanged: (val) => q.title = val,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            DropdownButton<String>(
+                              value: q.type,
+                              isDense: true,
+                              style: const TextStyle(fontSize: 12, color: Colors.black87),
+                              items: const [
+                                DropdownMenuItem(value: 'linear_scale', child: Text('Linear Scale (1-5)')),
+                                DropdownMenuItem(value: 'multiple_choice', child: Text('Multiple Choice')),
+                                DropdownMenuItem(value: 'paragraph', child: Text('Paragraph Text')),
+                              ],
+                              onChanged: (newType) {
+                                if (newType != null) {
+                                  setState(() {
+                                    q.type = newType;
+                                    if (newType == 'multiple_choice' && q.options.isEmpty) {
+                                      q.options = ['Option 1', 'Option 2'];
+                                    }
+                                  });
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+
+                        // Question Body Editor
+                        if (q.type == 'linear_scale') ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('1 (Poor)', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                                Row(
+                                  children: [
+                                    Icon(Icons.radio_button_unchecked, size: 16, color: Colors.grey),
+                                    SizedBox(width: 10),
+                                    Icon(Icons.radio_button_unchecked, size: 16, color: Colors.grey),
+                                    SizedBox(width: 10),
+                                    Icon(Icons.radio_button_unchecked, size: 16, color: Colors.grey),
+                                    SizedBox(width: 10),
+                                    Icon(Icons.radio_button_unchecked, size: 16, color: Colors.grey),
+                                    SizedBox(width: 10),
+                                    Icon(Icons.radio_button_unchecked, size: 16, color: Colors.grey),
+                                  ],
+                                ),
+                                Text('(Excellent) 5', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                              ],
+                            ),
+                          ),
+                        ] else if (q.type == 'multiple_choice') ...[
+                          Column(
+                            children: [
+                              ...q.options.asMap().entries.map((optEntry) {
+                                final optIdx = optEntry.key;
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8.0),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.radio_button_unchecked, size: 16, color: Colors.grey),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: TextFormField(
+                                          initialValue: q.options[optIdx],
+                                          style: const TextStyle(fontSize: 13),
+                                          decoration: const InputDecoration(
+                                            isDense: true,
+                                            contentPadding: EdgeInsets.symmetric(vertical: 4),
+                                            border: UnderlineInputBorder(),
+                                          ),
+                                          onChanged: (newOpt) => q.options[optIdx] = newOpt,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                                        onPressed: () {
+                                          setState(() => q.options.removeAt(optIdx));
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: TextButton.icon(
+                                  onPressed: () {
+                                    setState(() {
+                                      q.options.add('Option ${q.options.length + 1}');
+                                    });
+                                  },
+                                  icon: const Icon(Icons.add, size: 16, color: Color(0xFF1A73E8)),
+                                  label: const Text('Add option', style: TextStyle(fontSize: 12.5, color: Color(0xFF1A73E8))),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ] else ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 6.0),
+                            child: Text(
+                              'Long-answer text (Paragraph feedback from student)',
+                              style: TextStyle(color: Colors.grey, fontSize: 12, fontStyle: FontStyle.italic),
+                            ),
+                          ),
+                        ],
+
+                        const Divider(height: 20),
+
+                        // Card Actions: Duplicate, Delete, Required Toggle
+                        Row(
+                          children: [
+                            const Spacer(),
+                            IconButton(
+                              tooltip: 'Duplicate Question',
+                              icon: const Icon(Icons.copy_outlined, size: 20, color: Colors.grey),
+                              onPressed: () => _duplicateQuestion(idx),
+                            ),
+                            IconButton(
+                              tooltip: 'Delete Question',
+                              icon: const Icon(Icons.delete_outline, size: 20, color: Colors.grey),
+                              onPressed: () => _deleteQuestion(idx),
+                            ),
+                            Container(width: 1, height: 24, color: Colors.grey.shade300, margin: const EdgeInsets.symmetric(horizontal: 10)),
+                            const Text('Required', style: TextStyle(fontSize: 12, color: Colors.black87)),
+                            Switch(
+                              value: q.isRequired,
+                              activeThumbColor: maroonColor,
+                              onChanged: (val) {
+                                setState(() => q.isRequired = val);
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // -------------------------------------------------------------
-// 4. FORM STATS & RESPONSES SCREEN (GOOGLE FORMS RESPONSES STYLE)
+// 6. FORM STATS & RESPONSES SCREEN (GOOGLE FORMS RESPONSES STYLE)
 // -------------------------------------------------------------
 
 class EventSurveyStatsScreen extends StatelessWidget {
@@ -2843,7 +3263,7 @@ class EventSurveyStatsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // If 0 responses recorded: Display authentic empty state (NO fake bars / data!)
+            // If 0 responses recorded: Display authentic empty state (NO fake bars / dummy data!)
             if (!hasResponses) ...[
               Card(
                 elevation: 1,
@@ -3018,7 +3438,7 @@ class EventSurveyStatsScreen extends StatelessWidget {
 }
 
 // -------------------------------------------------------------
-// 5. EVALUATION SURVEY SCREEN (WITH PHILIPPINE DATA PRIVACY CONSENT)
+// 7. EVALUATION SURVEY SCREEN (WITH PHILIPPINE DATA PRIVACY CONSENT)
 // -------------------------------------------------------------
 
 class EvaluationSurveyScreen extends StatefulWidget {
@@ -3041,7 +3461,7 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
   int _overallRating = 5;
   final Map<int, String> _multipleChoiceAnswers = {};
   final _commentController = TextEditingController();
-  bool _dataPrivacyAgreed = false; // Philippine Data Privacy Checkbox
+  bool _dataPrivacyAgreed = false;
   bool _submitted = false;
 
   void _submitForm() {
@@ -3059,7 +3479,6 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
       _submitted = true;
     });
 
-    // Record response
     widget.announcement.attendeesCount += 1;
     widget.announcement.recordedResponses.add({
       'studentNumber': widget.user.studentNumber,
@@ -3157,7 +3576,6 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
     const maroonColor = Color(0xFF7A0C16);
     const requiredRed = Color(0xFFD93025);
 
-    // Fallback default questions if none specified
     final questions = widget.announcement.evaluationQuestions.isNotEmpty
         ? widget.announcement.evaluationQuestions
         : [
@@ -3286,7 +3704,7 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
         ),
         const SizedBox(height: 12),
 
-        // 3. Dynamic Form Questions generated from Builder / Templates
+        // 3. Dynamic Form Questions
         ...questions.asMap().entries.map((entry) {
           final qIdx = entry.key;
           final q = entry.value;
@@ -3358,7 +3776,6 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
               ],
             );
           } else {
-            // Paragraph / text feedback
             return Column(
               children: [
                 _buildQuestionCard(
@@ -3381,7 +3798,6 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
 
         const SizedBox(height: 6),
 
-        // Submit Button
         SizedBox(
           width: double.infinity,
           child: ElevatedButton(
