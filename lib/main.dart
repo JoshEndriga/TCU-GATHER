@@ -2139,7 +2139,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
     );
   }
 
-  // Officer Modal when event card is clicked: Full info + stats button + QR view
+  // Officer Modal when event card is clicked: Can slide to full screen (DraggableScrollableSheet) & displays QR Code on-screen
   void _openOfficerEventModal(CampusAnnouncement ann) {
     const maroonColor = Color(0xFF7A0C16);
 
@@ -2147,149 +2147,170 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(22),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 38,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            Text(ann.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: maroonColor)),
-            const SizedBox(height: 12),
-
-            if (ann.isEvent) ...[
-              Text('Schedule: ${ann.dateTime}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-              const SizedBox(height: 4),
-              Text('Venue: ${ann.venue}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-              const SizedBox(height: 4),
-              Text('Total Attendees Recorded: ${ann.attendeesCount} Students',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
-              const SizedBox(height: 8),
-              Text('Status: ${ann.isEnded ? "Concluded / Ended" : "Active / Ongoing"}',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ann.isEnded ? Colors.blue : Colors.green)),
-            ],
-            const SizedBox(height: 10),
-            Text(ann.description, style: const TextStyle(fontSize: 12.5, color: Colors.black87, height: 1.4)),
-            const SizedBox(height: 18),
-
-            // BUTTON: View Form Stats Screen (GForm style analytics)
-            if (ann.isEvent) ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: maroonColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => EventSurveyStatsScreen(announcement: ann),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.bar_chart, size: 18),
-                  label: const Text('View Evaluation Form Stats & Analytics'),
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // BUTTON: View Official Event QR Code (on-screen display)
-              if (ann.isApproved) ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: maroonColor),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.50,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (_, scrollController) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
                     ),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _showViewQrDialog(ann);
-                    },
-                    icon: const Icon(Icons.qr_code_2, size: 18, color: maroonColor),
-                    label: const Text('View Event QR Code', style: TextStyle(color: maroonColor)),
                   ),
                 ),
-              ],
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+                Text(ann.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: maroonColor)),
+                const SizedBox(height: 12),
 
-  // View QR code on-screen (not just download)
-  void _showViewQrDialog(CampusAnnouncement ann) {
-    const maroonColor = Color(0xFF7A0C16);
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Official Event QR Code\n${ann.title}', style: const TextStyle(fontSize: 15)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(color: Colors.grey.shade300, blurRadius: 8),
+                if (ann.isEvent) ...[
+                  Row(
+                    children: [
+                      const Icon(Icons.calendar_today_outlined, size: 15, color: maroonColor),
+                      const SizedBox(width: 8),
+                      Text('Schedule: ', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 16, color: maroonColor),
+                      const SizedBox(width: 8),
+                      Text('Venue: ', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.people_outline, size: 16, color: maroonColor),
+                      const SizedBox(width: 8),
+                      Text('Total Attendees Recorded:  Students',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        ann.isEnded ? Icons.check_circle_outline : Icons.timelapse,
+                        size: 16,
+                        color: ann.isEnded ? Colors.blue : Colors.green,
+                      ),
+                      const SizedBox(width: 8),
+                      Text('Status: ',
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: ann.isEnded ? Colors.blue : Colors.green)),
+                    ],
+                  ),
                 ],
-              ),
-              child: QrImageView(
-                data: 'TCU-GATHER-OFFICIAL-QR-${ann.id}',
-                version: QrVersions.auto,
-                size: 200.0,
-              ),
+                const SizedBox(height: 12),
+                const Text('Description', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
+                const SizedBox(height: 6),
+                Text(ann.description, style: const TextStyle(fontSize: 13, color: Colors.black87, height: 1.45)),
+                const SizedBox(height: 20),
+
+                // OFFICIAL EVENT QR CODE SECTION (PROMINENTLY DISPLAYED ON-SCREEN)
+                if (ann.isEvent && ann.isApproved) ...[
+                  const Divider(),
+                  const SizedBox(height: 12),
+                  const Center(
+                    child: Text(
+                      'Official Event Check-In QR Code',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: maroonColor),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Center(
+                    child: Text(
+                      'Attendees can scan this QR code directly from your screen',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11.5, color: Colors.grey),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.grey.shade300),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 10,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: QrImageView(
+                        data: 'TCU-GATHER-OFFICIAL-QR-',
+                        version: QrVersions.auto,
+                        size: 210.0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: maroonColor),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Saved QR Code Image to device storage!')),
+                        );
+                      },
+                      icon: const Icon(Icons.download, size: 18, color: maroonColor),
+                      label: const Text('Save / Download QR to Device', style: TextStyle(color: maroonColor, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
+                // BUTTON: View Form Stats Screen (GForm style responses)
+                if (ann.isEvent) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: maroonColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => EventSurveyStatsScreen(announcement: ann),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.bar_chart, size: 18),
+                      label: const Text('View Evaluation Form Stats & Responses'),
+                    ),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Attendees can scan this QR directly from this screen for check-in.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11.5, color: Colors.grey),
-            ),
-          ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: maroonColor,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Saved QR Code Image to device storage!')),
-              );
-            },
-            icon: const Icon(Icons.download, size: 16),
-            label: const Text('Save to Storage'),
-          ),
-        ],
       ),
     );
   }
