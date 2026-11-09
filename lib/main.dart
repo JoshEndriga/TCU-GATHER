@@ -6,17 +6,20 @@ void main() {
   runApp(const TcuGatherApp());
 }
 
+// Global one-time notification flag (persists across account switches)
+bool _hasRequestedNotificationPermission = false;
+
 // -------------------------------------------------------------
 // MODELS
 // -------------------------------------------------------------
 
 class UserAccount {
-  final String username; // Shortcut (e.g. 'unverified', 'cba', 'cict', 'cet', 'ssc')
+  final String username; // 'unverified', 'cba', 'cict', 'cet', 'ssc'
   final String studentNumber;
   String password;
   String fullName;
   String college; // 'CICT', 'CBA', 'CET', 'CAS', 'University-Wide'
-  bool isVerified; // True if attended TCU Orientation
+  bool isVerified; // True if attended TCU Orientation AND orientation has ended
   List<OrgMembership> orgMemberships;
 
   UserAccount({
@@ -58,18 +61,20 @@ class CampusAnnouncement {
   final String title;
   final String description;
   final String orgId;
-  final String orgName; // POSTER (ORGANIZATION NAME, NOT ACCOUNT)
+  final String orgName; // POSTER (ORGANIZATION NAME ONLY)
   final String targetAudience; // 'All', 'CICT', 'CBA', 'CET', 'CAS'
   final String venue;
   final String dateTime;
   final String bannerCategory; // 'orientation', 'tech', 'business', 'assembly', 'workshop'
-  final bool isEvent;
+  final bool isEvent; // True = Event Announcement, False = Normal Announcement
   final bool isOrientation;
+  bool isEnded; // True if the event has concluded (Verification requirement!)
   bool isApproved;
-  final String approvalStatus; // 'Cleared by Mother Org', 'Pending Mother Org Clearance'
+  final String approvalStatus;
   List<String> surveyQuestions;
   int attendeesCount;
   double averageRating;
+  List<String> attendeeFeedbackList;
 
   CampusAnnouncement({
     required this.id,
@@ -78,16 +83,18 @@ class CampusAnnouncement {
     required this.orgId,
     required this.orgName,
     required this.targetAudience,
-    required this.venue,
-    required this.dateTime,
+    this.venue = '',
+    this.dateTime = '',
     this.bannerCategory = 'tech',
     this.isEvent = true,
     this.isOrientation = false,
+    this.isEnded = false,
     this.isApproved = true,
     this.approvalStatus = 'Cleared by Mother Org',
     this.surveyQuestions = const [],
     this.attendeesCount = 0,
     this.averageRating = 5.0,
+    this.attendeeFeedbackList = const [],
   });
 }
 
@@ -117,20 +124,19 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
   }
 
   void _initializeData() {
-    // 5 Distinct Pre-seeded accounts (all password: 123)
     _users = [
-      // 1. Unverified Freshman (Orientation Locked)
+      // 1. Unverified Freshman (CICT)
       UserAccount(
         username: 'unverified',
         studentNumber: '2026-00001-TG-0',
         password: '123',
         fullName: 'Paul Samuel Del Valle',
         college: 'CICT',
-        isVerified: false, // UNVERIFIED: Only sees TCU Orientation!
+        isVerified: false,
         orgMemberships: [],
       ),
 
-      // 2. Verified Student from CBA (Different College)
+      // 2. Verified Student from CBA
       UserAccount(
         username: 'cba',
         studentNumber: '2024-20114-TG-0',
@@ -148,7 +154,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         ],
       ),
 
-      // 3. Multi-Org Officer (CICT Council + SSC Mother Org Officer + GDSC)
+      // 3. Multi-Org Officer (CICT + SSC + GDSC)
       UserAccount(
         username: 'cict',
         studentNumber: '2023-10291-TG-0',
@@ -178,7 +184,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         ],
       ),
 
-      // 4. Officer from Different College (CET - Engineering)
+      // 4. CET Engineering Officer
       UserAccount(
         username: 'cet',
         studentNumber: '2023-40182-TG-0',
@@ -196,7 +202,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         ],
       ),
 
-      // 5. Supreme Student Council President (Central Mother Org Authority)
+      // 5. SSC Mother Org President
       UserAccount(
         username: 'ssc',
         studentNumber: '2022-10001-TG-0',
@@ -221,7 +227,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
       ),
     ];
 
-    // Seeded check-in: Pre-mark Tech Summit attendance so verified users have an immediate pending evaluation in notifications!
+    // Seeded check-in: Tech Summit check-in recorded for verified demo accounts
     _checkedInEventIds.add('ev-tech-summit');
 
     _announcements = [
@@ -229,7 +235,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         id: 'ev-orientation',
         title: 'TCU Grand Student Orientation 2026',
         description:
-            'Mandatory university orientation for all new freshmen and transferees. Attending and scanning your QR code here verifies your account and unlocks your department access and college announcements.',
+            'Mandatory university orientation for new freshmen and transferees. Students must check in at the venue. Your account is officially verified once the orientation event concludes.',
         orgId: 'ssc',
         orgName: 'Supreme Student Council (Mother Org)',
         targetAudience: 'All',
@@ -238,6 +244,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         bannerCategory: 'orientation',
         isEvent: true,
         isOrientation: true,
+        isEnded: false, // Starts as ongoing/upcoming
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
         surveyQuestions: [
@@ -246,12 +253,17 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         ],
         attendeesCount: 320,
         averageRating: 4.9,
+        attendeeFeedbackList: [
+          'The campus orientation was very clear and informative!',
+          'Glad to learn about our department facilities and student services.',
+          'Sound system in the balcony could be louder, but overall great experience.',
+        ],
       ),
       CampusAnnouncement(
         id: 'ev-tech-summit',
         title: 'CICT Tech Summit & Coding Fair',
         description:
-            'Annual innovation and software exhibition organized by CICT. Open to all Computer Science and IT majors, featuring expert keynotes, project demos, and industry partner booths.',
+            'Annual innovation and software exhibition organized by CICT. Open to all Computer Science and IT majors, featuring expert keynotes, software demos, and project competitions.',
         orgId: 'cict_sc',
         orgName: 'Computer Studies Student Council (CICT)',
         targetAudience: 'CICT',
@@ -259,6 +271,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         dateTime: 'November 14, 2026 | 9:00 AM – 3:00 PM',
         bannerCategory: 'tech',
         isEvent: true,
+        isEnded: true, // Ended event (Ready for Evaluation survey in Notifications!)
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
         surveyQuestions: [
@@ -267,6 +280,11 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         ],
         attendeesCount: 142,
         averageRating: 4.8,
+        attendeeFeedbackList: [
+          'Great industry speakers and live Flutter code walk-throughs!',
+          'Hope there are more workshops on AI integration next semester.',
+          'Well organized registration and badge system.',
+        ],
       ),
       CampusAnnouncement(
         id: 'ev-cba-summit',
@@ -280,35 +298,36 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         dateTime: 'November 16, 2026 | 10:00 AM',
         bannerCategory: 'business',
         isEvent: true,
+        isEnded: false,
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
         surveyQuestions: ['Was the financial modeling seminar helpful?'],
         attendeesCount: 98,
         averageRating: 4.9,
+        attendeeFeedbackList: [
+          'Very relevant insights for young business majors.',
+        ],
       ),
       CampusAnnouncement(
-        id: 'ev-midterm-forum',
-        title: 'TCU Midterm University Assembly',
+        id: 'ann-general-advisory',
+        title: 'Midterm Campus Clearance Advisory',
         description:
-            'Campus-wide consultative forum by the Supreme Student Council discussing student welfare, campus Wi-Fi infrastructure upgrades, and semester clearance procedures.',
+            'General advisory from the Supreme Student Council. All student organizations and class representatives must submit mid-term activity reports prior to the clearance window.',
         orgId: 'ssc',
         orgName: 'Supreme Student Council (Mother Org)',
         targetAudience: 'All',
-        venue: 'University Gymnasium',
-        dateTime: 'November 18, 2026 | 1:00 PM',
+        venue: '',
+        dateTime: '',
         bannerCategory: 'assembly',
-        isEvent: true,
+        isEvent: false, // Normal Announcement!
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
-        surveyQuestions: ['Did the forum address your student concerns?'],
-        attendeesCount: 450,
-        averageRating: 4.7,
       ),
       CampusAnnouncement(
         id: 'ev-cyber-workshop',
         title: 'CICT Cyber Security & Ethical Hacking Workshop',
         description:
-            'Hands-on network defense, penetration testing, and ethical hacking workshop for CICT students. Required bring-your-own-laptop with Kali Linux virtual machine.',
+            'Hands-on network defense, penetration testing, and vulnerability auditing workshop for CICT students.',
         orgId: 'cict_sc',
         orgName: 'Computer Studies Student Council (CICT)',
         targetAudience: 'CICT',
@@ -316,7 +335,8 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         dateTime: 'November 22, 2026 | 10:00 AM',
         bannerCategory: 'workshop',
         isEvent: true,
-        isApproved: false, // PENDING MOTHER ORG APPROVAL!
+        isEnded: false,
+        isApproved: false, // PENDING Mother Org clearance!
         approvalStatus: 'Pending Mother Org Clearance',
         surveyQuestions: ['Overall workshop rating'],
         attendeesCount: 0,
@@ -345,6 +365,21 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
     }
   }
 
+  void _endEvent(String eventId) {
+    setState(() {
+      final idx = _announcements.indexWhere((a) => a.id == eventId);
+      if (idx != -1) {
+        _announcements[idx].isEnded = true;
+        // If this was orientation, verify any user who attended!
+        if (_announcements[idx].isOrientation &&
+            _checkedInEventIds.contains(eventId) &&
+            _currentUser != null) {
+          _currentUser!.isVerified = true;
+        }
+      }
+    });
+  }
+
   void _addAnnouncement(CampusAnnouncement announcement) {
     setState(() {
       _announcements.insert(0, announcement);
@@ -368,11 +403,13 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
           bannerCategory: old.bannerCategory,
           isEvent: old.isEvent,
           isOrientation: old.isOrientation,
+          isEnded: old.isEnded,
           isApproved: true,
           approvalStatus: 'Cleared by Mother Org',
           surveyQuestions: old.surveyQuestions,
           attendeesCount: old.attendeesCount,
           averageRating: old.averageRating,
+          attendeeFeedbackList: old.attendeeFeedbackList,
         );
       }
     });
@@ -419,6 +456,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
               completedSurveyEventIds: _completedSurveyEventIds,
               onLogout: _logout,
               onVerifyUser: _verifyCurrentUser,
+              onEndEvent: _endEvent,
               onAddAnnouncement: _addAnnouncement,
               onApproveAnnouncement: _approveAnnouncement,
               onCheckIn: (eventId) {
@@ -437,7 +475,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
 }
 
 // -------------------------------------------------------------
-// 1. AUTHENTICATION SCREEN (LOGIN WITH SHORTCUTS OR PASS 123)
+// 1. AUTHENTICATION SCREEN
 // -------------------------------------------------------------
 
 class LoginScreen extends StatefulWidget {
@@ -516,7 +554,7 @@ class _LoginScreenState extends State<LoginScreen> {
       password: pass,
       fullName: name,
       college: _regCollege,
-      isVerified: false, // UNVERIFIED: Must attend orientation
+      isVerified: false,
       orgMemberships: [],
     );
 
@@ -537,7 +575,6 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // TCU Maroon Seal Badge
                 Container(
                   padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
@@ -570,7 +607,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 22),
 
-                // Form Container
                 Card(
                   elevation: 3,
                   color: Colors.white,
@@ -582,7 +618,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 18),
 
-                // 1-TAP DEMO SHORTCUT BUTTONS
                 if (!_isRegistering) ...[
                   const Text(
                     '1-Tap Role Selector (Password: 123):',
@@ -701,7 +736,7 @@ class _LoginScreenState extends State<LoginScreen> {
             border: Border.all(color: const Color(0xFFD4AF37)),
           ),
           child: const Text(
-            'Notice: New accounts are tagged Unverified. You must attend the TCU Student Orientation to unlock your department access.',
+            'Notice: New accounts are tagged Unverified. You must attend the TCU Student Orientation and the event must conclude to unlock your department access.',
             style: TextStyle(fontSize: 11, color: Colors.black87),
           ),
         ),
@@ -759,7 +794,7 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 // -------------------------------------------------------------
-// 2. MAIN APPLICATION SHELL (3 NAV TABS + APPBAR NOTIFICATIONS)
+// 2. MAIN APPLICATION SHELL
 // -------------------------------------------------------------
 
 class MainAppShell extends StatefulWidget {
@@ -769,6 +804,7 @@ class MainAppShell extends StatefulWidget {
   final Set<String> completedSurveyEventIds;
   final VoidCallback onLogout;
   final VoidCallback onVerifyUser;
+  final ValueChanged<String> onEndEvent;
   final ValueChanged<CampusAnnouncement> onAddAnnouncement;
   final ValueChanged<String> onApproveAnnouncement;
   final ValueChanged<String> onCheckIn;
@@ -782,6 +818,7 @@ class MainAppShell extends StatefulWidget {
     required this.completedSurveyEventIds,
     required this.onLogout,
     required this.onVerifyUser,
+    required this.onEndEvent,
     required this.onAddAnnouncement,
     required this.onApproveAnnouncement,
     required this.onCheckIn,
@@ -793,23 +830,28 @@ class MainAppShell extends StatefulWidget {
 }
 
 class _MainAppShellState extends State<MainAppShell> {
-  int _navIndex = 0; // STRICTLY 3 TABS: 0: Home Feed, 1: QR Scanner, 2: More/Account
-  String _selectedCollegeFilter = 'All';
-  bool _notificationPromptShown = false;
+  int _navIndex = 0; // 0: Home Feed, 1: QR Scanner, 2: More/Account
+  late String _selectedCollegeFilter;
 
   @override
   void initState() {
     super.initState();
+    // DEFAULT FILTER: Set to user's college department by default!
+    _selectedCollegeFilter = widget.user.college == 'University-Wide'
+        ? 'All'
+        : widget.user.college;
+
+    // Check one-time notification permission
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _promptNotificationPermission();
+      if (!_hasRequestedNotificationPermission) {
+        _hasRequestedNotificationPermission = true;
+        _requestNativeNotificationPermission();
+      }
     });
   }
 
-  // System notification permission dialog on initial open
-  void _promptNotificationPermission() {
-    if (_notificationPromptShown) return;
-    _notificationPromptShown = true;
-
+  void _requestNativeNotificationPermission() {
+    // Shows genuine one-time system notice (never repeated on account switch)
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -821,14 +863,14 @@ class _MainAppShellState extends State<MainAppShell> {
             SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Allow Notifications?',
+                'Allow Notifications',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF7A0C16)),
               ),
             ),
           ],
         ),
         content: const Text(
-          'Allow TCU: GATHER to send you notifications?\n\nReceive instant alerts for official college announcements, class clearance schedules, and urgent event updates.',
+          'Allow TCU: GATHER to send you notifications on this device?\n\nYou will receive timely updates for upcoming college events, urgent student notices, and post-event survey clearances.',
           style: TextStyle(fontSize: 13, height: 1.4),
         ),
         actions: [
@@ -845,7 +887,7 @@ class _MainAppShellState extends State<MainAppShell> {
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Notifications enabled! You will receive official campus notices.'),
+                  content: Text('Notifications enabled for TCU: GATHER.'),
                   backgroundColor: Color(0xFF7A0C16),
                 ),
               );
@@ -857,15 +899,17 @@ class _MainAppShellState extends State<MainAppShell> {
     );
   }
 
-  // Get pending surveys list (attended events without submitted evaluation)
+  // Pending evaluations: Attended events that have ENDED and haven't had survey submitted yet
   List<CampusAnnouncement> _getPendingEvaluations() {
     return widget.announcements.where((a) {
-      return widget.checkedInEventIds.contains(a.id) &&
+      return a.isEvent &&
+          a.isEnded &&
+          widget.checkedInEventIds.contains(a.id) &&
           !widget.completedSurveyEventIds.contains(a.id);
     }).toList();
   }
 
-  // Get upcoming events list matching user's college or university-wide
+  // Upcoming events
   List<CampusAnnouncement> _getUpcomingEvents() {
     return widget.announcements.where((a) {
       if (!a.isApproved) return false;
@@ -874,12 +918,11 @@ class _MainAppShellState extends State<MainAppShell> {
     }).toList();
   }
 
-  // Open Google Forms Survey Screen
-  void _openGoogleFormsSurvey(CampusAnnouncement ann) {
+  void _openSurveyScreen(CampusAnnouncement ann) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => GoogleFormsSurveyScreen(
+        builder: (_) => EvaluationSurveyScreen(
           user: widget.user,
           announcement: ann,
           onComplete: () {
@@ -890,7 +933,6 @@ class _MainAppShellState extends State<MainAppShell> {
     );
   }
 
-  // Open Notification Center Bottom Sheet
   void _openNotificationCenter() {
     const maroonColor = Color(0xFF7A0C16);
     const goldColor = Color(0xFFD4AF37);
@@ -902,14 +944,13 @@ class _MainAppShellState extends State<MainAppShell> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
-        height: MediaQuery.of(context).size.height * 0.82,
+        height: MediaQuery.of(context).size.height * 0.80,
         decoration: const BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
         ),
         child: Column(
           children: [
-            // Handle bar
             Container(
               width: 42,
               height: 4,
@@ -919,8 +960,6 @@ class _MainAppShellState extends State<MainAppShell> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-
-            // Sheet Header
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
               child: Row(
@@ -942,7 +981,7 @@ class _MainAppShellState extends State<MainAppShell> {
                         style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: maroonColor),
                       ),
                       Text(
-                        'Campus Updates & Evaluation Forms',
+                        'Campus Notices & Evaluation Forms',
                         style: TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                     ],
@@ -957,18 +996,17 @@ class _MainAppShellState extends State<MainAppShell> {
             ),
             const Divider(height: 1),
 
-            // Scrollable Content
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.all(18),
                 children: [
-                  // SECTION 1: PENDING EVALUATIONS (ACTION REQUIRED)
+                  // PENDING EVALUATIONS
                   Row(
                     children: [
                       const Icon(Icons.assignment_late_outlined, size: 18, color: maroonColor),
                       const SizedBox(width: 8),
                       const Text(
-                        'Action Required: Event Evaluations',
+                        'Pending Evaluations (Action Required)',
                         style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: maroonColor),
                       ),
                       const Spacer(),
@@ -1003,7 +1041,7 @@ class _MainAppShellState extends State<MainAppShell> {
                           SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'You have no pending evaluations! All attended events have been surveyed and cleared.',
+                              'No pending evaluations! All attended events have been surveyed.',
                               style: TextStyle(fontSize: 12, color: Colors.green),
                             ),
                           ),
@@ -1022,26 +1060,18 @@ class _MainAppShellState extends State<MainAppShell> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                children: [
-                                  const Icon(Icons.warning_amber_rounded, color: Color(0xFFB78103), size: 20),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      'Attendance Recorded: ${ann.title}',
-                                      style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF7A0C16),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
                               Text(
-                                'You checked in to this event hosted by ${ann.orgName}. Complete the evaluation survey to finalize your attendance certificate and student clearance.',
-                                style: const TextStyle(fontSize: 12, color: Colors.black87, height: 1.35),
+                                'Pending Evaluation: ${ann.title}',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF7A0C16),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'You checked in to this event. Please accomplish the evaluation form to credit your clearance.',
+                                style: const TextStyle(fontSize: 12, color: Colors.black87),
                               ),
                               const SizedBox(height: 10),
                               SizedBox(
@@ -1055,11 +1085,11 @@ class _MainAppShellState extends State<MainAppShell> {
                                   ),
                                   onPressed: () {
                                     Navigator.pop(ctx);
-                                    _openGoogleFormsSurvey(ann);
+                                    _openSurveyScreen(ann);
                                   },
                                   icon: const Icon(Icons.assignment, size: 16),
                                   label: const Text(
-                                    'Fill Out Evaluation Survey (Google Form)',
+                                    'Open Evaluation Form',
                                     style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
                                   ),
                                 ),
@@ -1072,7 +1102,7 @@ class _MainAppShellState extends State<MainAppShell> {
                   const Divider(),
                   const SizedBox(height: 10),
 
-                  // SECTION 2: UPCOMING CAMPUS EVENTS
+                  // UPCOMING EVENTS
                   Row(
                     children: [
                       const Icon(Icons.event_available_outlined, size: 18, color: maroonColor),
@@ -1097,31 +1127,13 @@ class _MainAppShellState extends State<MainAppShell> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           child: ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                            leading: Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: maroonColor.withValues(alpha: 0.1),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.campaign, color: maroonColor, size: 20),
-                            ),
                             title: Text(
                               ann.title,
                               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                             ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 3),
-                                Text(
-                                  '${ann.orgName} • ${ann.dateTime}',
-                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
-                                ),
-                                Text(
-                                  'Venue: ${ann.venue}',
-                                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                                ),
-                              ],
+                            subtitle: Text(
+                              '${ann.orgName}\n${ann.dateTime.isNotEmpty ? "${ann.dateTime} • " : ""}${ann.venue}',
+                              style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
                             ),
                             trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
                             onTap: () {
@@ -1181,7 +1193,6 @@ class _MainAppShellState extends State<MainAppShell> {
           ],
         ),
         actions: [
-          // REPLACED LOGOUT WITH NOTIFICATION BELL (LOGOUT IS IN MORE/ACCOUNT)
           IconButton(
             tooltip: 'Campus Notifications',
             icon: Stack(
@@ -1247,12 +1258,16 @@ class _MainAppShellState extends State<MainAppShell> {
 
   Widget _buildHomeNewsfeedTab() {
     const maroonColor = Color(0xFF7A0C16);
+    final orientationAnn = widget.announcements.firstWhere((a) => a.isOrientation);
+    final hasCheckedInOrientation = widget.checkedInEventIds.contains(orientationAnn.id);
 
     // Filter logic:
-    // If user is UNVERIFIED, they can ONLY see the TCU Orientation event!
+    // 1. If unverified, ONLY orientation is visible.
+    // 2. If verified: Filter matches user's department OR 'All'.
+    // If an announcement was for whole student body ('All'), it ALSO shows up in user's department!
     final visibleAnnouncements = widget.announcements.where((a) {
       if (!widget.user.isVerified) {
-        return a.isOrientation; // ONLY ORIENTATION VISIBLE
+        return a.isOrientation;
       }
       if (!a.isApproved && !widget.user.isSscAdmin) {
         return false;
@@ -1266,7 +1281,7 @@ class _MainAppShellState extends State<MainAppShell> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // UNVERIFIED WARNING BANNER
+          // UNVERIFIED STATUS BANNER
           if (!widget.user.isVerified) ...[
             Container(
               padding: const EdgeInsets.all(14),
@@ -1293,26 +1308,53 @@ class _MainAppShellState extends State<MainAppShell> {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  Text(
-                    'Welcome, ${widget.user.fullName}! To verify your account, you must attend the TCU Student Orientation. Your ${widget.user.college} department feed and university announcements are locked until you check in.',
-                    style: const TextStyle(fontSize: 12, color: Colors.black87),
-                  ),
-                  const SizedBox(height: 10),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: maroonColor,
-                      foregroundColor: Colors.white,
+                  if (!hasCheckedInOrientation) ...[
+                    Text(
+                      'Welcome, ${widget.user.fullName}! To verify your account, you must attend the TCU Student Orientation and check in with your QR code. (Your account will be verified once the orientation event concludes).',
+                      style: const TextStyle(fontSize: 12, color: Colors.black87),
                     ),
-                    onPressed: () => setState(() => _navIndex = 1), // Go to Scanner
-                    icon: const Icon(Icons.qr_code_scanner, size: 16),
-                    label: const Text('Scan Orientation QR to Verify'),
-                  ),
+                    const SizedBox(height: 10),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: maroonColor,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => setState(() => _navIndex = 1),
+                      icon: const Icon(Icons.qr_code_scanner, size: 16),
+                      label: const Text('Check In at Orientation (QR Scanner)'),
+                    ),
+                  ] else if (!orientationAnn.isEnded) ...[
+                    Text(
+                      'Attendance Recorded for TCU Student Orientation! Your account will be verified as soon as the orientation event concludes.',
+                      style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 8),
+                    // Quick Action to simulate orientation concluding for demo
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: maroonColor),
+                      ),
+                      onPressed: () {
+                        widget.onEndEvent(orientationAnn.id);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Orientation has ended! Account is now Verified.')),
+                        );
+                      },
+                      icon: const Icon(Icons.flag, size: 16, color: maroonColor),
+                      label: const Text('Simulate Orientation Concluding', style: TextStyle(fontSize: 11.5, color: maroonColor)),
+                    ),
+                  ] else ...[
+                    const Text(
+                      'Orientation has ended! Your account is now verified.',
+                      style: TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ],
               ),
             ),
             const SizedBox(height: 16),
           ] else ...[
-            // Verified User: College Filter Chips
+            // Department Filter Chips (Defaulted to user's college)
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -1338,22 +1380,15 @@ class _MainAppShellState extends State<MainAppShell> {
             const SizedBox(height: 16),
           ],
 
-          Text(
-            !widget.user.isVerified
-                ? 'Mandatory Orientation Event'
-                : 'Verified Campus Announcements',
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: maroonColor),
-          ),
-          const SizedBox(height: 12),
-
           if (visibleAnnouncements.isEmpty)
             const Center(
               child: Padding(
                 padding: EdgeInsets.all(32.0),
-                child: Text('No announcements found for this filter.'),
+                child: Text('No announcements found for this department filter.'),
               ),
             ),
 
+          // Render cards: EXACT REQUESTED HIERARCHY ONLY
           ...visibleAnnouncements.map((ann) => _buildAnnouncementCard(ann)),
         ],
       ),
@@ -1361,229 +1396,126 @@ class _MainAppShellState extends State<MainAppShell> {
   }
 
   // ----------------------------------------------------------------------
-  // ANNOUNCEMENT CARD (ORDER: POSTER -> IMAGE -> TITLE -> DATE/TIME/VENUE)
-  // Clicking the card opens modal about that event with full information.
+  // ANNOUNCEMENT CARD: STRICT HIERARCHY ONLY
+  // 1. Name of org that posted at the top
+  // 2. Below that: The image
+  // 3. Below that: Title of announcement/post
+  // 4. Below that: Date and time
+  // 5. Below that: Location
+  // NO VISIBLE TAGS, NO APPROVAL PILLS, NO SURVEY BUTTONS!
   // ----------------------------------------------------------------------
   Widget _buildAnnouncementCard(CampusAnnouncement ann) {
     const maroonColor = Color(0xFF7A0C16);
-    final isCheckedIn = widget.checkedInEventIds.contains(ann.id);
-    final isSurveyDone = widget.completedSurveyEventIds.contains(ann.id);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 20),
-      elevation: 2.5,
+      margin: const EdgeInsets.only(bottom: 18),
+      elevation: 2,
       clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: () => _openFullEventDetails(ann),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. POSTER (ORG NAME NOT ACCOUNT)
+            // 1. NAME OF ORG THAT POSTED THE ANNOUNCEMENT AT THE TOP
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 17,
-                    backgroundColor: maroonColor.withValues(alpha: 0.1),
-                    child: const Icon(Icons.school, color: maroonColor, size: 20),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          ann.orgName, // Poster = Org Name (NOT account)
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: ann.isApproved ? Colors.green.shade50 : Colors.orange.shade50,
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(
-                                  color: ann.isApproved ? Colors.green.shade600 : Colors.orange.shade600,
-                                  width: 0.8,
-                                ),
-                              ),
-                              child: Text(
-                                ann.approvalStatus,
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.bold,
-                                  color: ann.isApproved ? Colors.green.shade800 : Colors.orange.shade800,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Target: ${ann.targetAudience}',
-                              style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (isCheckedIn && isSurveyDone)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.green.shade50,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.green),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.check_circle, color: Colors.green, size: 12),
-                          SizedBox(width: 3),
-                          Text('Cleared', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    )
-                  else if (isCheckedIn && !isSurveyDone)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF3CD),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: const Color(0xFFD4AF37)),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.rate_review, color: Color(0xFF856404), size: 12),
-                          SizedBox(width: 3),
-                          Text('Survey Due', style: TextStyle(color: Color(0xFF856404), fontSize: 10, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            // 2. IMAGE (IF THERE IS AN IMAGE THEN THAT)
-            _buildEventBannerImage(ann),
-
-            // 3. TITLE OF ANNOUNCEMENT OR EVENT
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
               child: Text(
-                ann.title,
+                ann.orgName, // Poster (Organization Name ONLY)
                 style: const TextStyle(
-                  fontSize: 16.5,
                   fontWeight: FontWeight.bold,
-                  height: 1.3,
-                  color: Color(0xFF212121),
+                  fontSize: 14,
+                  color: maroonColor,
                 ),
               ),
             ),
 
-            // 4. TIME, DATE, AND LOCATION
+            // 2. BELOW THAT IS THE IMAGE (CLEAN BANNER, NO REDUNDANT TEXT/TAGS)
+            _buildEventBannerImage(ann),
+
+            // 3. BELOW THAT IS THE TITLE OF THE ANNOUNCEMENT/POST
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.calendar_month_outlined, size: 15, color: maroonColor),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          ann.dateTime,
-                          style: TextStyle(fontSize: 12.5, color: Colors.grey.shade800, fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(Icons.location_on_outlined, size: 15, color: maroonColor),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          ann.venue,
-                          style: TextStyle(fontSize: 12.5, color: Colors.grey.shade800, fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+              child: Text(
+                ann.title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
               ),
             ),
 
-            // CLICKING OPENS MODAL FOOTER HINT
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
-                border: Border(top: BorderSide(color: Colors.grey.shade200)),
+            // 4. BELOW THAT IS DATE AND TIME (IF APPLICABLE)
+            if (ann.dateTime.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_today_outlined, size: 13, color: Colors.black54),
+                    const SizedBox(width: 6),
+                    Text(
+                      ann.dateTime,
+                      style: const TextStyle(fontSize: 12.5, color: Colors.black87),
+                    ),
+                  ],
+                ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Tap to view event description & clearance details',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
-                  ),
-                  const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.grey),
-                ],
-              ),
-            ),
+
+            // 5. BELOW THAT IS LOCATION (IF APPLICABLE)
+            if (ann.venue.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 2, 14, 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.location_on_outlined, size: 14, color: Colors.black54),
+                    const SizedBox(width: 6),
+                    Text(
+                      ann.venue,
+                      style: const TextStyle(fontSize: 12.5, color: Colors.black87),
+                    ),
+                  ],
+                ),
+              )
+            else
+              const SizedBox(height: 10),
           ],
         ),
       ),
     );
   }
 
-  // Visual Graphic Banner for each Event / Announcement
+  // Clean Event Banner Image (No redundant text or tags)
   Widget _buildEventBannerImage(CampusAnnouncement ann) {
     List<Color> gradientColors;
-    IconData bannerIcon;
-    String tagLabel;
+    IconData visualIcon;
 
     switch (ann.bannerCategory) {
       case 'orientation':
-        gradientColors = const [Color(0xFF7A0C16), Color(0xFF380308)];
-        bannerIcon = Icons.school_rounded;
-        tagLabel = 'TCU MANDATORY ORIENTATION';
+        gradientColors = const [Color(0xFF7A0C16), Color(0xFF420409)];
+        visualIcon = Icons.school;
         break;
       case 'tech':
-        gradientColors = const [Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)];
-        bannerIcon = Icons.terminal_rounded;
-        tagLabel = 'CICT TECH INNOVATION';
+        gradientColors = const [Color(0xFF0F2027), Color(0xFF2C5364)];
+        visualIcon = Icons.terminal;
         break;
       case 'business':
         gradientColors = const [Color(0xFF0D324D), Color(0xFF7F5A83)];
-        bannerIcon = Icons.trending_up_rounded;
-        tagLabel = 'CBA BUSINESS & ENTREPRENEURSHIP';
+        visualIcon = Icons.trending_up;
         break;
       case 'assembly':
         gradientColors = const [Color(0xFF141E30), Color(0xFF243B55)];
-        bannerIcon = Icons.account_balance_rounded;
-        tagLabel = 'TCU STUDENT WELFARE ASSEMBLY';
+        visualIcon = Icons.account_balance;
         break;
       case 'workshop':
       default:
         gradientColors = const [Color(0xFF232526), Color(0xFF414345)];
-        bannerIcon = Icons.security_rounded;
-        tagLabel = 'TECHNICAL WORKSHOP';
+        visualIcon = Icons.security;
         break;
     }
 
     return Container(
-      height: 145,
+      height: 140,
       width: double.infinity,
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -1592,106 +1524,53 @@ class _MainAppShellState extends State<MainAppShell> {
           end: Alignment.bottomRight,
         ),
       ),
-      child: Stack(
-        children: [
-          // Background subtle pattern watermark
-          Positioned(
-            right: -15,
-            bottom: -20,
-            child: Icon(
-              bannerIcon,
-              size: 150,
-              color: Colors.white.withValues(alpha: 0.08),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Top tag badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD4AF37),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    tagLabel,
-                    style: const TextStyle(
-                      color: Color(0xFF7A0C16),
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-                // Center Title Graphic Banner
-                Row(
-                  children: [
-                    Icon(bannerIcon, color: const Color(0xFFD4AF37), size: 32),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        ann.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(color: Colors.black45, blurRadius: 4, offset: Offset(1, 1)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                // Bottom official stamp
-                const Text(
-                  'Taguig City University • Official Student Notice',
-                  style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 0.3),
-                ),
-              ],
-            ),
-          ),
-        ],
+      child: Center(
+        child: Icon(
+          visualIcon,
+          size: 58,
+          color: Colors.white.withValues(alpha: 0.35),
+        ),
       ),
     );
   }
 
-  // --- DEDICATED FULL EVENT DETAILS SHEET (OPENED ON CARD CLICK) ---
+  // ----------------------------------------------------------------------
+  // MODAL WHEN CARD IS CLICKED:
+  // THE ONLY THING IN THE MODAL IS:
+  // 1. Poster
+  // 2. Title
+  // 3. Image
+  // 4. Date and Time
+  // 5. Venue
+  // 6. Description
+  // NO OTHER STUFF! NO SURVEY BUTTON/LINK, NO TAGS!
+  // ----------------------------------------------------------------------
   void _openFullEventDetails(CampusAnnouncement ann) {
     const maroonColor = Color(0xFF7A0C16);
-    final isCheckedIn = widget.checkedInEventIds.contains(ann.id);
-    final isSurveyDone = widget.completedSurveyEventIds.contains(ann.id);
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.8,
-        minChildSize: 0.5,
+        initialChildSize: 0.75,
+        minChildSize: 0.45,
         maxChildSize: 0.95,
         expand: false,
         builder: (_, scrollController) => Container(
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: SingleChildScrollView(
             controller: scrollController,
-            padding: const EdgeInsets.all(22.0),
+            padding: const EdgeInsets.all(20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Handle bar
                 Center(
                   child: Container(
-                    width: 40,
+                    width: 38,
                     height: 4,
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
@@ -1701,237 +1580,64 @@ class _MainAppShellState extends State<MainAppShell> {
                   ),
                 ),
 
-                // Organization & Approval Header
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: maroonColor.withValues(alpha: 0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.school, color: maroonColor, size: 22),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            ann.orgName,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                          Text(
-                            ann.approvalStatus,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: ann.isApproved ? Colors.green.shade700 : Colors.orange.shade800,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: maroonColor.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: maroonColor.withValues(alpha: 0.3)),
-                      ),
-                      child: Text(
-                        'Target: ${ann.targetAudience}',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: maroonColor),
-                      ),
-                    ),
-                  ],
+                // 1. POSTER (ORGANIZATION NAME ONLY)
+                Text(
+                  ann.orgName,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: maroonColor),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 6),
 
-                // Title
+                // 2. TITLE
                 Text(
                   ann.title,
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: maroonColor),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
 
-                // Logistics Card
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Column(
+                // 3. IMAGE
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: _buildEventBannerImage(ann),
+                ),
+                const SizedBox(height: 14),
+
+                // 4. DATE AND TIME
+                if (ann.dateTime.isNotEmpty) ...[
+                  Row(
                     children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.location_on, size: 18, color: maroonColor),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text('Venue: ${ann.venue}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          const Icon(Icons.access_time, size: 18, color: maroonColor),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text('Schedule: ${ann.dateTime}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                          ),
-                        ],
+                      const Icon(Icons.calendar_today_outlined, size: 15, color: maroonColor),
+                      const SizedBox(width: 8),
+                      Text(
+                        ann.dateTime,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 18),
+                  const SizedBox(height: 8),
+                ],
 
-                // Full Event Description / Brief
-                const Text('Event Overview & Guidelines', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                // 5. VENUE
+                if (ann.venue.isNotEmpty) ...[
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 16, color: maroonColor),
+                      const SizedBox(width: 8),
+                      Text(
+                        ann.venue,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
+                // 6. DESCRIPTION
+                const Text('Description', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
                 const SizedBox(height: 6),
                 Text(
                   ann.description,
-                  style: const TextStyle(fontSize: 13.5, color: Colors.black87, height: 1.5),
+                  style: const TextStyle(fontSize: 13, color: Colors.black87, height: 1.45),
                 ),
-                const SizedBox(height: 20),
-
-                // Stats / Info
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Expected Attendees', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                            const SizedBox(height: 4),
-                            Text('${ann.attendeesCount} Students', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Satisfaction Score', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                const Icon(Icons.star, color: Color(0xFFD4AF37), size: 16),
-                                Text(' ${ann.averageRating} / 5.0', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-
-                // Action button inside modal
-                if (ann.isEvent) ...[
-                  if (!isCheckedIn) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: maroonColor,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                        ),
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                          setState(() => _navIndex = 1);
-                        },
-                        icon: const Icon(Icons.qr_code_scanner),
-                        label: Text(
-                          ann.isOrientation ? 'Check In at Orientation' : 'Open QR Scanner at Venue',
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ),
-                  ] else if (!isSurveyDone) ...[
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFD4AF37),
-                          foregroundColor: Colors.black87,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                        ),
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                          _openGoogleFormsSurvey(ann);
-                        },
-                        icon: const Icon(Icons.assignment),
-                        label: const Text('Open Google Form Evaluation', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ] else ...[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.green.shade50,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.green.shade600),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.verified, color: Colors.green, size: 22),
-                          SizedBox(width: 8),
-                          Text(
-                            'Attendance & Evaluation Verified!',
-                            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-
-                // Mother Org clearance button for SSC Admin
-                if (!ann.isApproved && widget.user.isSscAdmin) ...[
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade800,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: () {
-                        widget.onApproveAnnouncement(ann.id);
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Cleared by Mother Org: ${ann.title}')),
-                        );
-                      },
-                      icon: const Icon(Icons.check_circle_outline),
-                      label: const Text('Mother Org (SSC): Approve & Clear Notice'),
-                    ),
-                  ),
-                ],
               ],
             ),
           ),
@@ -1965,7 +1671,7 @@ class _MainAppShellState extends State<MainAppShell> {
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Point camera at the organizer QR code displayed at the entrance venue.',
+                    'Point camera at the official event QR code at the venue door.',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -2040,19 +1746,18 @@ class _MainAppShellState extends State<MainAppShell> {
 
     if (!widget.user.isVerified) {
       widget.onCheckIn('ev-orientation');
-      widget.onVerifyUser();
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.verified, color: Colors.green),
+              Icon(Icons.check_circle, color: Colors.green),
               SizedBox(width: 8),
-              Text('Account Verified!'),
+              Text('Orientation Checked In!'),
             ],
           ),
           content: Text(
-            'Congratulations, ${widget.user.fullName}!\n\nYou have attended the TCU Student Orientation. Your account is now fully verified. Access to your ${widget.user.college} department and campus announcements has been unlocked!\n\nNote: A post-orientation evaluation form is now ready in your Notifications.',
+            'Attendance recorded for ${widget.user.fullName}!\n\nAs required by TCU policy, your account will become fully verified once the Student Orientation concludes.',
           ),
           actions: [
             ElevatedButton(
@@ -2064,7 +1769,7 @@ class _MainAppShellState extends State<MainAppShell> {
                 Navigator.pop(ctx);
                 setState(() => _navIndex = 0);
               },
-              child: const Text('Go to Campus Newsfeed'),
+              child: const Text('Back to Home'),
             ),
           ],
         ),
@@ -2073,7 +1778,7 @@ class _MainAppShellState extends State<MainAppShell> {
       widget.onCheckIn('ev-tech-summit');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Attendance Recorded! Evaluation unlocked in Notifications bell.'),
+          content: Text('Attendance recorded! Post-event survey unlocked in Notifications.'),
           backgroundColor: maroonColor,
         ),
       );
@@ -2175,6 +1880,7 @@ class _MainAppShellState extends State<MainAppShell> {
             ),
             const SizedBox(height: 10),
 
+            // Clicking whole card opens org hub directly!
             ...widget.user.orgMemberships
                 .where((m) => m.role != 'Member')
                 .map((m) => _buildOrgCard(m)),
@@ -2222,6 +1928,7 @@ class _MainAppShellState extends State<MainAppShell> {
     );
   }
 
+  // Org card: Click container to open hub (NO "Open Hub" button!)
   Widget _buildOrgCard(OrgMembership m) {
     const maroonColor = Color(0xFF7A0C16);
 
@@ -2229,25 +1936,36 @@ class _MainAppShellState extends State<MainAppShell> {
       elevation: 2,
       margin: const EdgeInsets.only(bottom: 10),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: maroonColor.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openOrgWorkspace(m), // Entire card is clickable to open Hub!
+        child: Padding(
+          padding: const EdgeInsets.all(14.0),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: maroonColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.groups, color: maroonColor),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(m.orgName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
+                    const SizedBox(height: 2),
+                    Text('Affiliation: ${m.collegeAffiliation} • Role: ${m.role}',
+                        style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+            ],
           ),
-          child: const Icon(Icons.groups, color: maroonColor),
-        ),
-        title: Text(m.orgName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-        subtitle: Text('Affiliation: ${m.collegeAffiliation} • Role: ${m.role}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-        trailing: ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: maroonColor,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          ),
-          onPressed: () => _openOrgWorkspace(m),
-          child: const Text('Open Hub', style: TextStyle(fontSize: 11)),
         ),
       ),
     );
@@ -2262,6 +1980,7 @@ class _MainAppShellState extends State<MainAppShell> {
           org: m,
           announcements: widget.announcements.where((a) => a.orgId == m.orgId).toList(),
           onAddAnnouncement: widget.onAddAnnouncement,
+          onEndEvent: widget.onEndEvent,
         ),
       ),
     );
@@ -2269,455 +1988,7 @@ class _MainAppShellState extends State<MainAppShell> {
 }
 
 // -------------------------------------------------------------
-// 3. GOOGLE FORMS EVALUATION SCREEN (AUTHENTIC GFORM STYLING)
-// -------------------------------------------------------------
-
-class GoogleFormsSurveyScreen extends StatefulWidget {
-  final UserAccount user;
-  final CampusAnnouncement announcement;
-  final VoidCallback onComplete;
-
-  const GoogleFormsSurveyScreen({
-    super.key,
-    required this.user,
-    required this.announcement,
-    required this.onComplete,
-  });
-
-  @override
-  State<GoogleFormsSurveyScreen> createState() => _GoogleFormsSurveyScreenState();
-}
-
-class _GoogleFormsSurveyScreenState extends State<GoogleFormsSurveyScreen> {
-  int _overallRating = 5; // 1 to 5 linear scale
-  String _relevanceChoice = 'Highly Relevant & Informative';
-  String _organizationChoice = 'Exceeded Expectations';
-  final _commentController = TextEditingController();
-  bool _submitted = false;
-
-  void _submitForm() {
-    setState(() {
-      _submitted = true;
-    });
-    widget.onComplete();
-  }
-
-  void _clearForm() {
-    setState(() {
-      _overallRating = 5;
-      _relevanceChoice = 'Highly Relevant & Informative';
-      _organizationChoice = 'Exceeded Expectations';
-      _commentController.clear();
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Form cleared')),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const gformHeaderPurple = Color(0xFF673AB7);
-    const gformBg = Color(0xFFEDE7F6);
-
-    return Scaffold(
-      backgroundColor: gformBg,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
-        elevation: 1,
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: gformHeaderPurple.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Icon(Icons.assignment, color: gformHeaderPurple, size: 20),
-            ),
-            const SizedBox(width: 8),
-            const Expanded(
-              child: Text(
-                'Google Forms',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.star_border, color: Colors.grey),
-            onPressed: () {},
-          ),
-          IconButton(
-            icon: const Icon(Icons.folder_outlined, color: Colors.grey),
-            onPressed: () {},
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 16.0),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: _submitted ? _buildConfirmationCard() : _buildFormContent(),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Post-submission Google Form Confirmation
-  Widget _buildConfirmationCard() {
-    const maroonColor = Color(0xFF7A0C16);
-
-    return Card(
-      elevation: 1,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Top accent strip
-          Container(
-            height: 10,
-            decoration: const BoxDecoration(
-              color: maroonColor,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${widget.announcement.title} - Post-Event Evaluation',
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Your response has been recorded.',
-                  style: TextStyle(fontSize: 14, color: Colors.black87),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Attendance clearance credit has been automatically verified on your TCU Student Profile.',
-                  style: TextStyle(fontSize: 12.5, color: Colors.black54),
-                ),
-                const SizedBox(height: 20),
-                InkWell(
-                  onTap: () => setState(() => _submitted = false),
-                  child: const Text(
-                    'Submit another response',
-                    style: TextStyle(fontSize: 13, color: Color(0xFF1A73E8), decoration: TextDecoration.underline),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: maroonColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                    ),
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Return to TCU: GATHER', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Active Google Form Questions
-  Widget _buildFormContent() {
-    const maroonColor = Color(0xFF7A0C16);
-    const requiredRed = Color(0xFFD93025);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // 1. GFORM HEADER CARD
-        Card(
-          elevation: 1,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top colored accent bar
-              Container(
-                height: 10,
-                decoration: const BoxDecoration(
-                  color: maroonColor,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Taguig City University',
-                      style: TextStyle(fontSize: 11.5, color: Colors.black54, letterSpacing: 0.5, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${widget.announcement.title} - Post-Event Evaluation',
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, height: 1.25),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Official Event Feedback & Attendance Verification Form.\nOrganized by: ${widget.announcement.orgName}\nVenue: ${widget.announcement.venue}\n\nYour candid evaluation helps our student council measure program impact and fulfills your student clearance requirement.',
-                      style: const TextStyle(fontSize: 13, color: Colors.black87, height: 1.45),
-                    ),
-                    const Divider(height: 24),
-                    // Authenticated Account Strip
-                    Row(
-                      children: [
-                        const Icon(Icons.account_circle, size: 20, color: Colors.black54),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '${widget.user.studentNumber.toLowerCase().replaceAll('-', '')}@tcu.edu.ph',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.black87),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const Text(
-                          'Switch account',
-                          style: TextStyle(fontSize: 12, color: Color(0xFF1A73E8), fontWeight: FontWeight.w500),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Row(
-                      children: [
-                        Icon(Icons.cloud_done_outlined, size: 14, color: Colors.grey),
-                        SizedBox(width: 4),
-                        Text('Draft saved', style: TextStyle(fontSize: 11, color: Colors.grey)),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      '* Indicates required question',
-                      style: TextStyle(color: requiredRed, fontSize: 12, fontWeight: FontWeight.w500),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // 2. QUESTION 1: LINEAR SCALE (1 to 5)
-        _buildQuestionCard(
-          title: '1. Overall satisfaction with this event *',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 6),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(right: 8.0),
-                      child: Text('Poor', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    ),
-                    ...List.generate(5, (index) {
-                      final val = index + 1;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                        child: Column(
-                          children: [
-                            Text('$val', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                            Radio<int>(
-                              value: val,
-                              groupValue: _overallRating,
-                              activeColor: maroonColor,
-                              onChanged: (v) {
-                                if (v != null) setState(() => _overallRating = v);
-                              },
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                    const Padding(
-                      padding: EdgeInsets.only(left: 8.0),
-                      child: Text('Excellent', style: TextStyle(fontSize: 12, color: Colors.black54)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // 3. QUESTION 2: MULTIPLE CHOICE (RELEVANCE)
-        _buildQuestionCard(
-          title: '2. Relevance and academic value of the topic presented *',
-          child: Column(
-            children: [
-              'Highly Relevant & Informative',
-              'Moderately Relevant',
-              'Slightly Relevant',
-              'Not Relevant',
-            ].map((option) {
-              return RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(option, style: const TextStyle(fontSize: 13)),
-                value: option,
-                groupValue: _relevanceChoice,
-                activeColor: maroonColor,
-                onChanged: (val) {
-                  if (val != null) setState(() => _relevanceChoice = val);
-                },
-              );
-            }).toList(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // 4. QUESTION 3: MULTIPLE CHOICE (ORGANIZATION & VENUE)
-        _buildQuestionCard(
-          title: '3. Organization, registration flow, and venue accommodation *',
-          child: Column(
-            children: [
-              'Exceeded Expectations',
-              'Met Expectations',
-              'Needs Improvement',
-            ].map((option) {
-              return RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(option, style: const TextStyle(fontSize: 13)),
-                value: option,
-                groupValue: _organizationChoice,
-                activeColor: maroonColor,
-                onChanged: (val) {
-                  if (val != null) setState(() => _organizationChoice = val);
-                },
-              );
-            }).toList(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // 5. QUESTION 4: PARAGRAPH TEXT ("Your answer")
-        _buildQuestionCard(
-          title: '4. Suggestions, feedback, or topics you want to request for future events',
-          child: TextField(
-            controller: _commentController,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              hintText: 'Your answer',
-              hintStyle: TextStyle(color: Colors.grey, fontSize: 13),
-              enabledBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: Colors.grey),
-              ),
-              focusedBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: maroonColor, width: 2),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
-
-        // 6. GFORM BUTTONS ROW
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: maroonColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-              ),
-              onPressed: _submitForm,
-              child: const Text('Submit', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            ),
-            TextButton(
-              onPressed: _clearForm,
-              child: const Text('Clear form', style: TextStyle(color: Color(0xFF1A73E8), fontSize: 13)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-
-        // 7. GFORM DISCLAIMER & FOOTER
-        const Center(
-          child: Column(
-            children: [
-              Text(
-                'Never submit passwords through Google Forms.',
-                style: TextStyle(fontSize: 11, color: Colors.black54),
-              ),
-              SizedBox(height: 4),
-              Text(
-                'This form was created inside Taguig City University.',
-                style: TextStyle(fontSize: 11, color: Colors.black54),
-              ),
-              SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.assignment, size: 16, color: Colors.grey),
-                  SizedBox(width: 4),
-                  Text(
-                    'Google Forms',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.grey),
-                  ),
-                ],
-              ),
-              SizedBox(height: 24),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuestionCard({required String title, required Widget child}) {
-    return Card(
-      elevation: 1,
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: Colors.grey.shade300, width: 0.8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(18.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, height: 1.3),
-            ),
-            const SizedBox(height: 12),
-            child,
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// -------------------------------------------------------------
-// 4. ORGANIZATION WORKSPACE (OFFICER SCREEN)
+// 3. ORGANIZATION WORKSPACE (OFFICER SCREEN)
 // -------------------------------------------------------------
 
 class OrgWorkspaceScreen extends StatefulWidget {
@@ -2725,6 +1996,7 @@ class OrgWorkspaceScreen extends StatefulWidget {
   final OrgMembership org;
   final List<CampusAnnouncement> announcements;
   final ValueChanged<CampusAnnouncement> onAddAnnouncement;
+  final ValueChanged<String> onEndEvent;
 
   const OrgWorkspaceScreen({
     super.key,
@@ -2732,6 +2004,7 @@ class OrgWorkspaceScreen extends StatefulWidget {
     required this.org,
     required this.announcements,
     required this.onAddAnnouncement,
+    required this.onEndEvent,
   });
 
   @override
@@ -2751,9 +2024,9 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: maroonColor,
         foregroundColor: Colors.white,
-        onPressed: _openCreateAnnouncementDialog,
+        onPressed: _openCreatePostDialog,
         icon: const Icon(Icons.add),
-        label: const Text('Create Event Notice'),
+        label: const Text('Create Post / Notice'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -2782,15 +2055,25 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
             ),
             const SizedBox(height: 20),
 
-            const Text('Event History & Live Evaluation Stats', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: maroonColor)),
-            const SizedBox(height: 10),
+            const Text(
+              'Organization Activity Hub',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: maroonColor),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Tap any event to view attendees, schedule, location, and evaluation survey statistics.',
+              style: TextStyle(fontSize: 11.5, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
 
             if (widget.announcements.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(24.0),
-                child: Text('No events published yet for this organization.'),
+                child: Text('No announcements or events published yet for this organization.'),
               ),
 
+            // Event card on Org Screen: DOES NOT SHOW survey score or attendees!
+            // Clicking opens modal showing full info & stats button!
             ...widget.announcements.map((ann) => _buildOfficerEventCard(ann)),
           ],
         ),
@@ -2798,84 +2081,154 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
     );
   }
 
+  // Org Screen Event Card: Clean, NO attendee/survey scores on card!
   Widget _buildOfficerEventCard(CampusAnnouncement ann) {
-    const maroonColor = Color(0xFF7A0C16);
-
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(14.0),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openOfficerEventModal(ann),
+        child: Padding(
+          padding: const EdgeInsets.all(14.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      ann.title,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: ann.isApproved ? Colors.green.shade50 : Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: ann.isApproved ? Colors.green : Colors.orange),
+                    ),
+                    child: Text(
+                      ann.isApproved ? 'Approved' : 'Pending Clearance',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: ann.isApproved ? Colors.green.shade800 : Colors.orange.shade800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              if (ann.isEvent)
+                Text(
+                  '${ann.dateTime} • ${ann.venue}',
+                  style: const TextStyle(fontSize: 11.5, color: Colors.grey),
+                )
+              else
+                const Text(
+                  'Normal Announcement (Non-event post)',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Officer Modal when event card is clicked: Full info + stats button + QR view
+  void _openOfficerEventModal(CampusAnnouncement ann) {
+    const maroonColor = Color(0xFF7A0C16);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(22),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    ann.title,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: ann.isApproved ? Colors.green.shade50 : Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: ann.isApproved ? Colors.green : Colors.orange),
-                  ),
-                  child: Text(
-                    ann.isApproved ? 'Approved' : 'Pending Clearance',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: ann.isApproved ? Colors.green.shade800 : Colors.orange.shade800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text('${ann.dateTime} • ${ann.venue}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-            const Divider(height: 16),
-
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                Column(
-                  children: [
-                    Text('${ann.attendeesCount}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: maroonColor)),
-                    const Text('Total Attendees', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                  ],
-                ),
-                Column(
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.star, color: Color(0xFFD4AF37), size: 16),
-                        Text(' ${ann.averageRating}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                    const Text('Survey Score', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            if (ann.isApproved) ...[
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: maroonColor),
-                  ),
-                  onPressed: () => _showDownloadQrDialog(ann),
-                  icon: const Icon(Icons.qr_code, size: 16, color: maroonColor),
-                  label: const Text('Download / Print Event QR', style: TextStyle(fontSize: 12, color: maroonColor)),
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
+            ),
+            Text(ann.title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: maroonColor)),
+            const SizedBox(height: 12),
+
+            if (ann.isEvent) ...[
+              Text('Schedule: ${ann.dateTime}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 4),
+              Text('Venue: ${ann.venue}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 4),
+              Text('Total Attendees Recorded: ${ann.attendeesCount} Students',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
+              const SizedBox(height: 8),
+              Text('Status: ${ann.isEnded ? "Concluded / Ended" : "Active / Ongoing"}',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ann.isEnded ? Colors.blue : Colors.green)),
+            ],
+            const SizedBox(height: 10),
+            Text(ann.description, style: const TextStyle(fontSize: 12.5, color: Colors.black87, height: 1.4)),
+            const SizedBox(height: 18),
+
+            // BUTTON: View Form Stats Screen (GForm style analytics)
+            if (ann.isEvent) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: maroonColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => EventSurveyStatsScreen(announcement: ann),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.bar_chart, size: 18),
+                  label: const Text('View Evaluation Form Stats & Analytics'),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // BUTTON: View Official Event QR Code (on-screen display)
+              if (ann.isApproved) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: maroonColor),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _showViewQrDialog(ann);
+                    },
+                    icon: const Icon(Icons.qr_code_2, size: 18, color: maroonColor),
+                    label: const Text('View Event QR Code', style: TextStyle(color: maroonColor)),
+                  ),
+                ),
+              ],
             ],
           ],
         ),
@@ -2883,13 +2236,14 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
     );
   }
 
-  void _showDownloadQrDialog(CampusAnnouncement ann) {
+  // View QR code on-screen (not just download)
+  void _showViewQrDialog(CampusAnnouncement ann) {
     const maroonColor = Color(0xFF7A0C16);
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Official Event QR Code\n${ann.title}', style: const TextStyle(fontSize: 14)),
+        title: Text('Official Event QR Code\n${ann.title}', style: const TextStyle(fontSize: 15)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2905,18 +2259,22 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
               child: QrImageView(
                 data: 'TCU-GATHER-OFFICIAL-QR-${ann.id}',
                 version: QrVersions.auto,
-                size: 180.0,
+                size: 200.0,
               ),
             ),
             const SizedBox(height: 12),
             const Text(
-              'Generated specifically for this approved event.\nPrint or display this at entrance door registration.',
+              'Attendees can scan this QR directly from this screen for check-in.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              style: TextStyle(fontSize: 11.5, color: Colors.grey),
             ),
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: maroonColor,
@@ -2929,16 +2287,18 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
               );
             },
             icon: const Icon(Icons.download, size: 16),
-            label: const Text('Save / Print QR'),
+            label: const Text('Save to Storage'),
           ),
         ],
       ),
     );
   }
 
-  void _openCreateAnnouncementDialog() {
+  // Create post dialog: Select between Normal Announcement vs Event Announcement!
+  void _openCreatePostDialog() {
     const maroonColor = Color(0xFF7A0C16);
 
+    bool isEventPost = true; // Selector
     final titleCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     final venueCtrl = TextEditingController();
@@ -2948,74 +2308,687 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New Event & Survey Form', style: TextStyle(fontSize: 16)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Event Title')),
-              const SizedBox(height: 8),
-              TextField(controller: descCtrl, decoration: const InputDecoration(labelText: 'Event Brief')),
-              const SizedBox(height: 8),
-              TextField(controller: venueCtrl, decoration: const InputDecoration(labelText: 'Venue (e.g. Auditorium)')),
-              const SizedBox(height: 8),
-              TextField(controller: dateCtrl, decoration: const InputDecoration(labelText: 'Date & Time')),
-              const SizedBox(height: 8),
-              TextField(
-                controller: surveyCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Evaluation Survey Question',
-                  hintText: 'e.g. Rate the speaker delivery',
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create New Post / Notice', style: TextStyle(fontSize: 16)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Selector: Normal Announcement vs Event Announcement
+                const Text('Select Post Type:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('Normal Notice'),
+                        selected: !isEventPost,
+                        selectedColor: maroonColor,
+                        labelStyle: TextStyle(color: !isEventPost ? Colors.white : Colors.black87, fontSize: 11),
+                        onSelected: (_) => setDialogState(() => isEventPost = false),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ChoiceChip(
+                        label: const Text('Event Notice'),
+                        selected: isEventPost,
+                        selectedColor: maroonColor,
+                        labelStyle: TextStyle(color: isEventPost ? Colors.white : Colors.black87, fontSize: 11),
+                        onSelected: (_) => setDialogState(() => isEventPost = true),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder())),
+                const SizedBox(height: 10),
+                TextField(controller: descCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Description / Guidelines', border: OutlineInputBorder())),
+                const SizedBox(height: 10),
+
+                // If Event Announcement, require logistics and survey setup!
+                if (isEventPost) ...[
+                  TextField(controller: venueCtrl, decoration: const InputDecoration(labelText: 'Venue (e.g. TCU Gymnasium)', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  TextField(controller: dateCtrl, decoration: const InputDecoration(labelText: 'Date & Time', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: surveyCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Evaluation Survey Question',
+                      hintText: 'e.g. Rate speaker relevance & clarity',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+
+                Text(
+                  'Audience: $target (Restricted to your authority)',
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: maroonColor,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                if (titleCtrl.text.isEmpty) return;
+                final newAnn = CampusAnnouncement(
+                  id: 'post-${DateTime.now().millisecondsSinceEpoch}',
+                  title: titleCtrl.text.trim(),
+                  description: descCtrl.text.trim(),
+                  orgId: widget.org.orgId,
+                  orgName: widget.org.orgName,
+                  targetAudience: target,
+                  venue: isEventPost ? venueCtrl.text.trim() : '',
+                  dateTime: isEventPost ? dateCtrl.text.trim() : '',
+                  bannerCategory: isEventPost ? 'tech' : 'assembly',
+                  isEvent: isEventPost,
+                  isApproved: widget.org.orgId == 'ssc',
+                  approvalStatus: widget.org.orgId == 'ssc'
+                      ? 'Cleared by Mother Org'
+                      : 'Pending Mother Org Clearance',
+                  surveyQuestions: isEventPost && surveyCtrl.text.isNotEmpty ? [surveyCtrl.text.trim()] : [],
+                );
+                widget.onAddAnnouncement(newAnn);
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(widget.org.orgId == 'ssc'
+                        ? 'Post Cleared & Published!'
+                        : 'Post Submitted for Mother Org Clearance!'),
+                  ),
+                );
+              },
+              child: const Text('Submit for Approval'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// -------------------------------------------------------------
+// 4. FORM STATS & RESPONSES SCREEN (GOOGLE FORMS RESPONSES STYLE)
+// -------------------------------------------------------------
+
+class EventSurveyStatsScreen extends StatelessWidget {
+  final CampusAnnouncement announcement;
+
+  const EventSurveyStatsScreen({super.key, required this.announcement});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF1F3F4),
+      appBar: AppBar(
+        title: Text('${announcement.title} - Responses', style: const TextStyle(fontSize: 15)),
+        actions: [
+          IconButton(
+            tooltip: 'Export to Excel (.xlsx)',
+            icon: const Icon(Icons.table_view, color: Colors.lightGreenAccent),
+            onPressed: () => _exportToExcel(context),
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top Responses Count Card
+            Card(
+              elevation: 1,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              child: Padding(
+                padding: const EdgeInsets.all(18.0),
+                child: Row(
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${announcement.attendeesCount} responses',
+                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text('Accepting responses', style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                    const Spacer(),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade700,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => _exportToExcel(context),
+                      icon: const Icon(Icons.file_download, size: 16),
+                      label: const Text('Export Excel'),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Target Audience: $target (Restricted to your authority)',
-                style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+
+            // Stat Card 1: Linear Satisfaction Rating
+            _buildStatCard(
+              title: '1. Overall Satisfaction Rating',
+              subtitle: 'Average Score: ${announcement.averageRating} / 5.0 (Weighted Average)',
+              child: Column(
+                children: [
+                  const SizedBox(height: 10),
+                  _buildProgressBar('5 Stars (Excellent)', 0.78, '78%'),
+                  const SizedBox(height: 6),
+                  _buildProgressBar('4 Stars (Very Good)', 0.16, '16%'),
+                  const SizedBox(height: 6),
+                  _buildProgressBar('3 Stars (Neutral)', 0.04, '4%'),
+                  const SizedBox(height: 6),
+                  _buildProgressBar('1-2 Stars (Poor)', 0.02, '2%'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Stat Card 2: Relevance & Academic Value
+            _buildStatCard(
+              title: '2. Relevance to Academic & Career Development',
+              subtitle: '${announcement.attendeesCount} responses',
+              child: Column(
+                children: [
+                  const SizedBox(height: 10),
+                  _buildProgressBar('Highly Relevant & Informative', 0.82, '82%'),
+                  const SizedBox(height: 6),
+                  _buildProgressBar('Moderately Relevant', 0.14, '14%'),
+                  const SizedBox(height: 6),
+                  _buildProgressBar('Slightly / Not Relevant', 0.04, '4%'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Stat Card 3: Qualitative Feedback / Suggestions
+            _buildStatCard(
+              title: '3. Student Feedback & Comments',
+              subtitle: 'Recent student submissions',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+                  if (announcement.attendeeFeedbackList.isEmpty)
+                    const Text('No text comments recorded yet.', style: TextStyle(color: Colors.grey, fontSize: 12))
+                  else
+                    ...announcement.attendeeFeedbackList.map(
+                      (feedback) => Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: Text('“$feedback”', style: const TextStyle(fontSize: 12.5, fontStyle: FontStyle.italic)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _exportToExcel(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.table_view, color: Colors.green),
+            SizedBox(width: 8),
+            Text('Excel Export Ready'),
+          ],
+        ),
+        content: Text(
+          'Downloaded TCU_GATHER_${announcement.id}_Responses.xlsx with ${announcement.attendeesCount} response rows.\n\nFile saved to: Downloads/TCU_GATHER_${announcement.id}_Responses.xlsx',
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard({required String title, required String subtitle, required Widget child}) {
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 2),
+            Text(subtitle, style: const TextStyle(fontSize: 11.5, color: Colors.grey)),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProgressBar(String label, double ratio, String percentage) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w500)),
+            Text(percentage, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: ratio,
+            minHeight: 8,
+            backgroundColor: Colors.grey.shade200,
+            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7A0C16)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// -------------------------------------------------------------
+// 5. EVALUATION SURVEY SCREEN (WITH PHILIPPINE DATA PRIVACY CONSENT)
+// -------------------------------------------------------------
+
+class EvaluationSurveyScreen extends StatefulWidget {
+  final UserAccount user;
+  final CampusAnnouncement announcement;
+  final VoidCallback onComplete;
+
+  const EvaluationSurveyScreen({
+    super.key,
+    required this.user,
+    required this.announcement,
+    required this.onComplete,
+  });
+
+  @override
+  State<EvaluationSurveyScreen> createState() => _EvaluationSurveyScreenState();
+}
+
+class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
+  int _overallRating = 5;
+  String _relevanceChoice = 'Highly Relevant & Informative';
+  String _organizationChoice = 'Exceeded Expectations';
+  final _commentController = TextEditingController();
+  bool _dataPrivacyAgreed = false; // Philippine Data Privacy Checkbox
+  bool _submitted = false;
+
+  void _submitForm() {
+    if (!_dataPrivacyAgreed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please check the Philippine Data Privacy Consent box before submitting.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _submitted = true;
+    });
+    widget.onComplete();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const formBg = Color(0xFFF4F1F8);
+
+    return Scaffold(
+      backgroundColor: formBg,
+      appBar: AppBar(
+        title: const Text('Event Evaluation Form', style: TextStyle(fontSize: 16)),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 16.0),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: _submitted ? _buildConfirmationCard() : _buildFormContent(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConfirmationCard() {
+    const maroonColor = Color(0xFF7A0C16);
+
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            height: 8,
+            decoration: const BoxDecoration(
+              color: maroonColor,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(10)),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(22.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${widget.announcement.title} - Evaluation',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Your response has been recorded. Thank you for completing your evaluation!',
+                  style: TextStyle(fontSize: 13.5, color: Colors.black87),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Attendance clearance credit has been automatically verified on your TCU Student Profile.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: maroonColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Return to TCU: GATHER', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFormContent() {
+    const maroonColor = Color(0xFF7A0C16);
+    const requiredRed = Color(0xFFD93025);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 1. Form Header Card (Using App Student Account, NOT Google)
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: maroonColor,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(10)),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(18.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${widget.announcement.title} - Evaluation Form',
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Organized by: ${widget.announcement.orgName}\nVenue: ${widget.announcement.venue}',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const Divider(height: 20),
+                    Row(
+                      children: [
+                        const Icon(Icons.person_pin, size: 20, color: maroonColor),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Student: ${widget.user.fullName} (${widget.user.studentNumber}) • ${widget.user.college}',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '* Indicates required question',
+                      style: TextStyle(color: requiredRed, fontSize: 11.5, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
+        const SizedBox(height: 12),
+
+        // 2. PHILIPPINE DATA PRIVACY CONSENT NOTICE CARD (RA 10173)
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: maroonColor.withValues(alpha: 0.3)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.privacy_tip_outlined, color: maroonColor, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Philippine Data Privacy Consent Notice',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: maroonColor),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Republic Act No. 10173 (Data Privacy Act of 2012)',
+                  style: TextStyle(fontSize: 10.5, color: Colors.grey, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Taguig City University is committed to protecting your privacy rights. In compliance with the Philippine Data Privacy Act of 2012, all responses gathered in this evaluation form will be processed strictly for attendance accreditation, student clearance, and program enhancement. Your responses will remain confidential.',
+                  style: TextStyle(fontSize: 11.5, color: Colors.black87, height: 1.4),
+                ),
+                const SizedBox(height: 10),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  activeColor: maroonColor,
+                  value: _dataPrivacyAgreed,
+                  title: const Text(
+                    'I have read, understood, and agree to the TCU Data Privacy Consent Agreement *',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  onChanged: (val) {
+                    setState(() => _dataPrivacyAgreed = val ?? false);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 3. Question 1: Linear Scale (1 to 5)
+        _buildQuestionCard(
+          title: '1. Overall satisfaction with this event *',
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                const Text('Poor', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ...List.generate(5, (index) {
+                  final val = index + 1;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: Column(
+                      children: [
+                        Text('$val', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        Radio<int>(
+                          value: val,
+                          groupValue: _overallRating,
+                          activeColor: maroonColor,
+                          onChanged: (v) {
+                            if (v != null) setState(() => _overallRating = v);
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const Text('Excellent', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 4. Question 2: Multiple Choice (Relevance)
+        _buildQuestionCard(
+          title: '2. Relevance and academic value of the topic presented *',
+          child: Column(
+            children: [
+              'Highly Relevant & Informative',
+              'Moderately Relevant',
+              'Slightly Relevant',
+              'Not Relevant',
+            ].map((option) {
+              return RadioListTile<String>(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text(option, style: const TextStyle(fontSize: 12.5)),
+                value: option,
+                groupValue: _relevanceChoice,
+                activeColor: maroonColor,
+                onChanged: (val) {
+                  if (val != null) setState(() => _relevanceChoice = val);
+                },
+              );
+            }).toList(),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 5. Question 3: Multiple Choice (Organization)
+        _buildQuestionCard(
+          title: '3. Organization and venue accommodation *',
+          child: Column(
+            children: [
+              'Exceeded Expectations',
+              'Met Expectations',
+              'Needs Improvement',
+            ].map((option) {
+              return RadioListTile<String>(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text(option, style: const TextStyle(fontSize: 12.5)),
+                value: option,
+                groupValue: _organizationChoice,
+                activeColor: maroonColor,
+                onChanged: (val) {
+                  if (val != null) setState(() => _organizationChoice = val);
+                },
+              );
+            }).toList(),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 6. Question 4: Paragraph Feedback
+        _buildQuestionCard(
+          title: '4. Suggestions or recommendations for future TCU events',
+          child: TextField(
+            controller: _commentController,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              hintText: 'Share your comments or requested topics...',
+              hintStyle: TextStyle(color: Colors.grey, fontSize: 12),
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+
+        // Submit Button
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: maroonColor,
               foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
             ),
-            onPressed: () {
-              if (titleCtrl.text.isEmpty) return;
-              final newAnn = CampusAnnouncement(
-                id: 'ev-${DateTime.now().millisecondsSinceEpoch}',
-                title: titleCtrl.text.trim(),
-                description: descCtrl.text.trim(),
-                orgId: widget.org.orgId,
-                orgName: widget.org.orgName,
-                targetAudience: target,
-                venue: venueCtrl.text.trim(),
-                dateTime: dateCtrl.text.trim(),
-                bannerCategory: 'tech',
-                isApproved: widget.org.orgId == 'ssc',
-                approvalStatus: widget.org.orgId == 'ssc'
-                    ? 'Cleared by Mother Org'
-                    : 'Pending Mother Org Clearance',
-                surveyQuestions: [surveyCtrl.text.trim()],
-              );
-              widget.onAddAnnouncement(newAnn);
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(widget.org.orgId == 'ssc'
-                      ? 'Event Published & QR Generated!'
-                      : 'Event Submitted for SSC Clearance!'),
-                ),
-              );
-            },
-            child: const Text('Submit for Approval'),
+            onPressed: _submitForm,
+            child: const Text('Submit Evaluation', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
           ),
-        ],
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _buildQuestionCard({required String title, required Widget child}) {
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            child,
+          ],
+        ),
       ),
     );
   }
