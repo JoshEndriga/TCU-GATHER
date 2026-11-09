@@ -56,6 +56,40 @@ class OrgMembership {
   });
 }
 
+// Model for dynamic evaluation form questions
+class FormQuestion {
+  String title;
+  String type; // 'linear_scale', 'multiple_choice', 'paragraph'
+  List<String> options;
+
+  FormQuestion({
+    required this.title,
+    this.type = 'linear_scale',
+    List<String>? options,
+  }) : options = options ?? [];
+
+  FormQuestion clone() {
+    return FormQuestion(
+      title: title,
+      type: type,
+      options: List<String>.from(options),
+    );
+  }
+}
+
+// Model for saved question sets / templates
+class QuestionSetTemplate {
+  final String id;
+  final String name;
+  final List<FormQuestion> questions;
+
+  QuestionSetTemplate({
+    required this.id,
+    required this.name,
+    required this.questions,
+  });
+}
+
 class CampusAnnouncement {
   final String id;
   final String title;
@@ -71,10 +105,11 @@ class CampusAnnouncement {
   bool isEnded; // True if the event has concluded (Verification requirement!)
   bool isApproved;
   final String approvalStatus;
-  List<String> surveyQuestions;
+  List<FormQuestion> evaluationQuestions; // Configurable form questions!
   int attendeesCount;
   double averageRating;
   List<String> attendeeFeedbackList;
+  List<Map<String, dynamic>> recordedResponses; // Actual recorded responses!
 
   CampusAnnouncement({
     required this.id,
@@ -91,11 +126,12 @@ class CampusAnnouncement {
     this.isEnded = false,
     this.isApproved = true,
     this.approvalStatus = 'Cleared by Mother Org',
-    this.surveyQuestions = const [],
+    this.evaluationQuestions = const [],
     this.attendeesCount = 0,
     this.averageRating = 5.0,
     this.attendeeFeedbackList = const [],
-  });
+    List<Map<String, dynamic>>? recordedResponses,
+  }) : recordedResponses = recordedResponses ?? [];
 }
 
 // -------------------------------------------------------------
@@ -113,6 +149,7 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
   late List<UserAccount> _users;
   UserAccount? _currentUser;
   late List<CampusAnnouncement> _announcements;
+  late List<QuestionSetTemplate> _savedTemplates;
 
   final Set<String> _checkedInEventIds = {};
   final Set<String> _completedSurveyEventIds = {};
@@ -124,6 +161,72 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
   }
 
   void _initializeData() {
+    // Default reusable question templates
+    _savedTemplates = [
+      QuestionSetTemplate(
+        id: 'tpl-academic',
+        name: 'TCU Academic Seminar / Summit',
+        questions: [
+          FormQuestion(
+            title: 'Overall satisfaction with this academic seminar',
+            type: 'linear_scale',
+          ),
+          FormQuestion(
+            title: 'Relevance of topics to your academic studies',
+            type: 'multiple_choice',
+            options: ['Highly Relevant & Informative', 'Moderately Relevant', 'Slightly Relevant', 'Not Relevant'],
+          ),
+          FormQuestion(
+            title: 'Speaker delivery and mastery of subject matter',
+            type: 'multiple_choice',
+            options: ['Exceeded Expectations', 'Met Expectations', 'Needs Improvement'],
+          ),
+          FormQuestion(
+            title: 'Key takeaways and recommendations for future seminars',
+            type: 'paragraph',
+          ),
+        ],
+      ),
+      QuestionSetTemplate(
+        id: 'tpl-workshop',
+        name: 'Hands-on Technical Workshop',
+        questions: [
+          FormQuestion(
+            title: 'Practical learning and technical depth of the workshop',
+            type: 'linear_scale',
+          ),
+          FormQuestion(
+            title: 'Sufficiency of coding exercises and live demonstrations',
+            type: 'multiple_choice',
+            options: ['Very Sufficient', 'Just Right', 'Needed More Hands-on'],
+          ),
+          FormQuestion(
+            title: 'What software tools or frameworks should we explore next?',
+            type: 'paragraph',
+          ),
+        ],
+      ),
+      QuestionSetTemplate(
+        id: 'tpl-forum',
+        name: 'Campus Consultative Assembly / Forum',
+        questions: [
+          FormQuestion(
+            title: 'Overall rating of the consultative assembly',
+            type: 'linear_scale',
+          ),
+          FormQuestion(
+            title: 'Were student concerns and questions adequately addressed?',
+            type: 'multiple_choice',
+            options: ['Fully Addressed', 'Partially Addressed', 'Not Addressed'],
+          ),
+          FormQuestion(
+            title: 'Additional questions or requests for student council officers',
+            type: 'paragraph',
+          ),
+        ],
+      ),
+    ];
+
     _users = [
       // 1. Unverified Freshman (CICT)
       UserAccount(
@@ -244,15 +347,15 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         bannerCategory: 'orientation',
         isEvent: true,
         isOrientation: true,
-        isEnded: false, // Starts as ongoing/upcoming
+        isEnded: false,
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
-        surveyQuestions: [
-          'How clear were the university campus guidelines?',
-          'How helpful was the tour of college departments?',
-        ],
+        evaluationQuestions: _savedTemplates[0].questions.map((q) => q.clone()).toList(),
         attendeesCount: 320,
         averageRating: 4.9,
+        recordedResponses: [
+          {'rating': 5, 'relevance': 'Highly Relevant & Informative', 'feedback': 'Great overview of campus policies.'},
+        ],
         attendeeFeedbackList: [
           'The campus orientation was very clear and informative!',
           'Glad to learn about our department facilities and student services.',
@@ -271,15 +374,15 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         dateTime: 'November 14, 2026 | 9:00 AM – 3:00 PM',
         bannerCategory: 'tech',
         isEvent: true,
-        isEnded: true, // Ended event (Ready for Evaluation survey in Notifications!)
+        isEnded: true,
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
-        surveyQuestions: [
-          'Rate the technical depth of the masterclass',
-          'Were the hands-on project demos useful?',
-        ],
+        evaluationQuestions: _savedTemplates[1].questions.map((q) => q.clone()).toList(),
         attendeesCount: 142,
         averageRating: 4.8,
+        recordedResponses: [
+          {'rating': 5, 'relevance': 'Very Sufficient', 'feedback': 'Loved the live coding and tech demos.'},
+        ],
         attendeeFeedbackList: [
           'Great industry speakers and live Flutter code walk-throughs!',
           'Hope there are more workshops on AI integration next semester.',
@@ -301,9 +404,12 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         isEnded: false,
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
-        surveyQuestions: ['Was the financial modeling seminar helpful?'],
+        evaluationQuestions: _savedTemplates[0].questions.map((q) => q.clone()).toList(),
         attendeesCount: 98,
         averageRating: 4.9,
+        recordedResponses: [
+          {'rating': 5, 'relevance': 'Highly Relevant & Informative', 'feedback': 'Inspiring founder presentations.'},
+        ],
         attendeeFeedbackList: [
           'Very relevant insights for young business majors.',
         ],
@@ -319,28 +425,9 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
         venue: '',
         dateTime: '',
         bannerCategory: 'assembly',
-        isEvent: false, // Normal Announcement!
+        isEvent: false, // Normal Announcement
         isApproved: true,
         approvalStatus: 'Cleared by Mother Org',
-      ),
-      CampusAnnouncement(
-        id: 'ev-cyber-workshop',
-        title: 'CICT Cyber Security & Ethical Hacking Workshop',
-        description:
-            'Hands-on network defense, penetration testing, and vulnerability auditing workshop for CICT students.',
-        orgId: 'cict_sc',
-        orgName: 'Computer Studies Student Council (CICT)',
-        targetAudience: 'CICT',
-        venue: 'Computer Lab 3',
-        dateTime: 'November 22, 2026 | 10:00 AM',
-        bannerCategory: 'workshop',
-        isEvent: true,
-        isEnded: false,
-        isApproved: false, // PENDING Mother Org clearance!
-        approvalStatus: 'Pending Mother Org Clearance',
-        surveyQuestions: ['Overall workshop rating'],
-        attendeesCount: 0,
-        averageRating: 0.0,
       ),
     ];
   }
@@ -370,7 +457,6 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
       final idx = _announcements.indexWhere((a) => a.id == eventId);
       if (idx != -1) {
         _announcements[idx].isEnded = true;
-        // If this was orientation, verify any user who attended!
         if (_announcements[idx].isOrientation &&
             _checkedInEventIds.contains(eventId) &&
             _currentUser != null) {
@@ -383,6 +469,12 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
   void _addAnnouncement(CampusAnnouncement announcement) {
     setState(() {
       _announcements.insert(0, announcement);
+    });
+  }
+
+  void _saveQuestionTemplate(QuestionSetTemplate template) {
+    setState(() {
+      _savedTemplates.add(template);
     });
   }
 
@@ -406,10 +498,11 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
           isEnded: old.isEnded,
           isApproved: true,
           approvalStatus: 'Cleared by Mother Org',
-          surveyQuestions: old.surveyQuestions,
+          evaluationQuestions: old.evaluationQuestions,
           attendeesCount: old.attendeesCount,
           averageRating: old.averageRating,
           attendeeFeedbackList: old.attendeeFeedbackList,
+          recordedResponses: old.recordedResponses,
         );
       }
     });
@@ -452,12 +545,14 @@ class _TcuGatherAppState extends State<TcuGatherApp> {
           : MainAppShell(
               user: _currentUser!,
               announcements: _announcements,
+              savedTemplates: _savedTemplates,
               checkedInEventIds: _checkedInEventIds,
               completedSurveyEventIds: _completedSurveyEventIds,
               onLogout: _logout,
               onVerifyUser: _verifyCurrentUser,
               onEndEvent: _endEvent,
               onAddAnnouncement: _addAnnouncement,
+              onSaveQuestionTemplate: _saveQuestionTemplate,
               onApproveAnnouncement: _approveAnnouncement,
               onCheckIn: (eventId) {
                 setState(() {
@@ -800,12 +895,14 @@ class _LoginScreenState extends State<LoginScreen> {
 class MainAppShell extends StatefulWidget {
   final UserAccount user;
   final List<CampusAnnouncement> announcements;
+  final List<QuestionSetTemplate> savedTemplates;
   final Set<String> checkedInEventIds;
   final Set<String> completedSurveyEventIds;
   final VoidCallback onLogout;
   final VoidCallback onVerifyUser;
   final ValueChanged<String> onEndEvent;
   final ValueChanged<CampusAnnouncement> onAddAnnouncement;
+  final ValueChanged<QuestionSetTemplate> onSaveQuestionTemplate;
   final ValueChanged<String> onApproveAnnouncement;
   final ValueChanged<String> onCheckIn;
   final ValueChanged<String> onCompleteSurvey;
@@ -814,12 +911,14 @@ class MainAppShell extends StatefulWidget {
     super.key,
     required this.user,
     required this.announcements,
+    required this.savedTemplates,
     required this.checkedInEventIds,
     required this.completedSurveyEventIds,
     required this.onLogout,
     required this.onVerifyUser,
     required this.onEndEvent,
     required this.onAddAnnouncement,
+    required this.onSaveQuestionTemplate,
     required this.onApproveAnnouncement,
     required this.onCheckIn,
     required this.onCompleteSurvey,
@@ -836,12 +935,11 @@ class _MainAppShellState extends State<MainAppShell> {
   @override
   void initState() {
     super.initState();
-    // DEFAULT FILTER: Set to user's college department by default!
+    // DEFAULT FILTER: Set to user's college department by default
     _selectedCollegeFilter = widget.user.college == 'University-Wide'
         ? 'All'
         : widget.user.college;
 
-    // Check one-time notification permission
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_hasRequestedNotificationPermission) {
         _hasRequestedNotificationPermission = true;
@@ -851,7 +949,6 @@ class _MainAppShellState extends State<MainAppShell> {
   }
 
   void _requestNativeNotificationPermission() {
-    // Shows genuine one-time system notice (never repeated on account switch)
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1000,7 +1097,6 @@ class _MainAppShellState extends State<MainAppShell> {
               child: ListView(
                 padding: const EdgeInsets.all(18),
                 children: [
-                  // PENDING EVALUATIONS
                   Row(
                     children: [
                       const Icon(Icons.assignment_late_outlined, size: 18, color: maroonColor),
@@ -1102,7 +1198,6 @@ class _MainAppShellState extends State<MainAppShell> {
                   const Divider(),
                   const SizedBox(height: 10),
 
-                  // UPCOMING EVENTS
                   Row(
                     children: [
                       const Icon(Icons.event_available_outlined, size: 18, color: maroonColor),
@@ -1226,7 +1321,6 @@ class _MainAppShellState extends State<MainAppShell> {
         ],
       ),
       body: screens[_navIndex],
-      // STRICTLY 3 BOTTOM NAVIGATION BUTTONS
       bottomNavigationBar: NavigationBar(
         selectedIndex: _navIndex,
         indicatorColor: maroonColor.withValues(alpha: 0.15),
@@ -1261,10 +1355,6 @@ class _MainAppShellState extends State<MainAppShell> {
     final orientationAnn = widget.announcements.firstWhere((a) => a.isOrientation);
     final hasCheckedInOrientation = widget.checkedInEventIds.contains(orientationAnn.id);
 
-    // Filter logic:
-    // 1. If unverified, ONLY orientation is visible.
-    // 2. If verified: Filter matches user's department OR 'All'.
-    // If an announcement was for whole student body ('All'), it ALSO shows up in user's department!
     final visibleAnnouncements = widget.announcements.where((a) {
       if (!widget.user.isVerified) {
         return a.isOrientation;
@@ -1329,7 +1419,6 @@ class _MainAppShellState extends State<MainAppShell> {
                       style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w500),
                     ),
                     const SizedBox(height: 8),
-                    // Quick Action to simulate orientation concluding for demo
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: maroonColor),
@@ -1388,7 +1477,6 @@ class _MainAppShellState extends State<MainAppShell> {
               ),
             ),
 
-          // Render cards: EXACT REQUESTED HIERARCHY ONLY
           ...visibleAnnouncements.map((ann) => _buildAnnouncementCard(ann)),
         ],
       ),
@@ -1402,7 +1490,6 @@ class _MainAppShellState extends State<MainAppShell> {
   // 3. Below that: Title of announcement/post
   // 4. Below that: Date and time
   // 5. Below that: Location
-  // NO VISIBLE TAGS, NO APPROVAL PILLS, NO SURVEY BUTTONS!
   // ----------------------------------------------------------------------
   Widget _buildAnnouncementCard(CampusAnnouncement ann) {
     const maroonColor = Color(0xFF7A0C16);
@@ -1485,7 +1572,6 @@ class _MainAppShellState extends State<MainAppShell> {
     );
   }
 
-  // Clean Event Banner Image (No redundant text or tags)
   Widget _buildEventBannerImage(CampusAnnouncement ann) {
     List<Color> gradientColors;
     IconData visualIcon;
@@ -1534,17 +1620,7 @@ class _MainAppShellState extends State<MainAppShell> {
     );
   }
 
-  // ----------------------------------------------------------------------
-  // MODAL WHEN CARD IS CLICKED:
-  // THE ONLY THING IN THE MODAL IS:
-  // 1. Poster
-  // 2. Title
-  // 3. Image
-  // 4. Date and Time
-  // 5. Venue
-  // 6. Description
-  // NO OTHER STUFF! NO SURVEY BUTTON/LINK, NO TAGS!
-  // ----------------------------------------------------------------------
+  // MODAL WHEN CARD IS CLICKED (FULL SCREEN SLIDING BOTTOM SHEET)
   void _openFullEventDetails(CampusAnnouncement ann) {
     const maroonColor = Color(0xFF7A0C16);
 
@@ -1880,7 +1956,6 @@ class _MainAppShellState extends State<MainAppShell> {
             ),
             const SizedBox(height: 10),
 
-            // Clicking whole card opens org hub directly!
             ...widget.user.orgMemberships
                 .where((m) => m.role != 'Member')
                 .map((m) => _buildOrgCard(m)),
@@ -1928,7 +2003,6 @@ class _MainAppShellState extends State<MainAppShell> {
     );
   }
 
-  // Org card: Click container to open hub (NO "Open Hub" button!)
   Widget _buildOrgCard(OrgMembership m) {
     const maroonColor = Color(0xFF7A0C16);
 
@@ -1938,7 +2012,7 @@ class _MainAppShellState extends State<MainAppShell> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => _openOrgWorkspace(m), // Entire card is clickable to open Hub!
+        onTap: () => _openOrgWorkspace(m),
         child: Padding(
           padding: const EdgeInsets.all(14.0),
           child: Row(
@@ -1979,7 +2053,9 @@ class _MainAppShellState extends State<MainAppShell> {
           user: widget.user,
           org: m,
           announcements: widget.announcements.where((a) => a.orgId == m.orgId).toList(),
+          savedTemplates: widget.savedTemplates,
           onAddAnnouncement: widget.onAddAnnouncement,
+          onSaveQuestionTemplate: widget.onSaveQuestionTemplate,
           onEndEvent: widget.onEndEvent,
         ),
       ),
@@ -1995,7 +2071,9 @@ class OrgWorkspaceScreen extends StatefulWidget {
   final UserAccount user;
   final OrgMembership org;
   final List<CampusAnnouncement> announcements;
+  final List<QuestionSetTemplate> savedTemplates;
   final ValueChanged<CampusAnnouncement> onAddAnnouncement;
+  final ValueChanged<QuestionSetTemplate> onSaveQuestionTemplate;
   final ValueChanged<String> onEndEvent;
 
   const OrgWorkspaceScreen({
@@ -2003,7 +2081,9 @@ class OrgWorkspaceScreen extends StatefulWidget {
     required this.user,
     required this.org,
     required this.announcements,
+    required this.savedTemplates,
     required this.onAddAnnouncement,
+    required this.onSaveQuestionTemplate,
     required this.onEndEvent,
   });
 
@@ -2061,7 +2141,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Tap any event to view attendees, schedule, location, and evaluation survey statistics.',
+              'Tap any event to slide open full details, view QR code, or open Evaluation Form Stats.',
               style: TextStyle(fontSize: 11.5, color: Colors.grey),
             ),
             const SizedBox(height: 12),
@@ -2072,8 +2152,6 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                 child: Text('No announcements or events published yet for this organization.'),
               ),
 
-            // Event card on Org Screen: DOES NOT SHOW survey score or attendees!
-            // Clicking opens modal showing full info & stats button!
             ...widget.announcements.map((ann) => _buildOfficerEventCard(ann)),
           ],
         ),
@@ -2081,7 +2159,6 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
     );
   }
 
-  // Org Screen Event Card: Clean, NO attendee/survey scores on card!
   Widget _buildOfficerEventCard(CampusAnnouncement ann) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -2139,7 +2216,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
     );
   }
 
-  // Officer Modal when event card is clicked: Can slide to full screen (DraggableScrollableSheet) & displays QR Code on-screen
+  // Officer Modal: Draggable sheet that slides to full screen & displays on-screen QR Code
   void _openOfficerEventModal(CampusAnnouncement ann) {
     const maroonColor = Color(0xFF7A0C16);
 
@@ -2182,7 +2259,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                     children: [
                       const Icon(Icons.calendar_today_outlined, size: 15, color: maroonColor),
                       const SizedBox(width: 8),
-                      Text('Schedule: ', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      Text('Schedule: ${ann.dateTime}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -2190,7 +2267,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                     children: [
                       const Icon(Icons.location_on_outlined, size: 16, color: maroonColor),
                       const SizedBox(width: 8),
-                      Text('Venue: ', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      Text('Venue: ${ann.venue}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -2198,7 +2275,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                     children: [
                       const Icon(Icons.people_outline, size: 16, color: maroonColor),
                       const SizedBox(width: 8),
-                      Text('Total Attendees Recorded:  Students',
+                      Text('Total Attendees Recorded: ${ann.attendeesCount} Students',
                           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87)),
                     ],
                   ),
@@ -2211,7 +2288,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                         color: ann.isEnded ? Colors.blue : Colors.green,
                       ),
                       const SizedBox(width: 8),
-                      Text('Status: ',
+                      Text('Status: ${ann.isEnded ? "Concluded / Ended" : "Active / Ongoing"}',
                           style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: ann.isEnded ? Colors.blue : Colors.green)),
                     ],
                   ),
@@ -2222,7 +2299,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                 Text(ann.description, style: const TextStyle(fontSize: 13, color: Colors.black87, height: 1.45)),
                 const SizedBox(height: 20),
 
-                // OFFICIAL EVENT QR CODE SECTION (PROMINENTLY DISPLAYED ON-SCREEN)
+                // OFFICIAL EVENT QR CODE DISPLAYED DIRECTLY ON-SCREEN
                 if (ann.isEvent && ann.isApproved) ...[
                   const Divider(),
                   const SizedBox(height: 12),
@@ -2257,7 +2334,7 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                         ],
                       ),
                       child: QrImageView(
-                        data: 'TCU-GATHER-OFFICIAL-QR-',
+                        data: 'TCU-GATHER-OFFICIAL-QR-${ann.id}',
                         version: QrVersions.auto,
                         size: 210.0,
                       ),
@@ -2315,83 +2392,291 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
     );
   }
 
-  // Create post dialog: Select between Normal Announcement vs Event Announcement!
+  // INTERACTIVE FORM BUILDER & EVENT POST DIALOG
   void _openCreatePostDialog() {
     const maroonColor = Color(0xFF7A0C16);
 
-    bool isEventPost = true; // Selector
+    bool isEventPost = true;
     final titleCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     final venueCtrl = TextEditingController();
     final dateCtrl = TextEditingController();
-    final surveyCtrl = TextEditingController();
     String target = widget.org.orgId == 'ssc' ? 'All' : widget.org.collegeAffiliation;
+
+    // Active questions list in form builder (starts pre-populated with default template)
+    List<FormQuestion> builderQuestions = widget.savedTemplates.isNotEmpty
+        ? widget.savedTemplates[0].questions.map((q) => q.clone()).toList()
+        : [
+            FormQuestion(title: 'Overall satisfaction with this activity', type: 'linear_scale'),
+            FormQuestion(
+              title: 'Relevance to academic or career goals',
+              type: 'multiple_choice',
+              options: ['Very High', 'Moderate', 'Low'],
+            ),
+          ];
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Create New Post / Notice', style: TextStyle(fontSize: 16)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Selector: Normal Announcement vs Event Announcement
-                const Text('Select Post Type:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Text('Normal Notice'),
-                        selected: !isEventPost,
-                        selectedColor: maroonColor,
-                        labelStyle: TextStyle(color: !isEventPost ? Colors.white : Colors.black87, fontSize: 11),
-                        onSelected: (_) => setDialogState(() => isEventPost = false),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Select Post Type:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text('Normal Notice'),
+                          selected: !isEventPost,
+                          selectedColor: maroonColor,
+                          labelStyle: TextStyle(color: !isEventPost ? Colors.white : Colors.black87, fontSize: 11),
+                          onSelected: (_) => setDialogState(() => isEventPost = false),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Text('Event Notice'),
-                        selected: isEventPost,
-                        selectedColor: maroonColor,
-                        labelStyle: TextStyle(color: isEventPost ? Colors.white : Colors.black87, fontSize: 11),
-                        onSelected: (_) => setDialogState(() => isEventPost = true),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text('Event Notice'),
+                          selected: isEventPost,
+                          selectedColor: maroonColor,
+                          labelStyle: TextStyle(color: isEventPost ? Colors.white : Colors.black87, fontSize: 11),
+                          onSelected: (_) => setDialogState(() => isEventPost = true),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder())),
-                const SizedBox(height: 10),
-                TextField(controller: descCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Description / Guidelines', border: OutlineInputBorder())),
-                const SizedBox(height: 10),
-
-                // If Event Announcement, require logistics and survey setup!
-                if (isEventPost) ...[
-                  TextField(controller: venueCtrl, decoration: const InputDecoration(labelText: 'Venue (e.g. TCU Gymnasium)', border: OutlineInputBorder())),
-                  const SizedBox(height: 10),
-                  TextField(controller: dateCtrl, decoration: const InputDecoration(labelText: 'Date & Time', border: OutlineInputBorder())),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: surveyCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Evaluation Survey Question',
-                      hintText: 'e.g. Rate speaker relevance & clarity',
-                      border: OutlineInputBorder(),
-                    ),
+                    ],
                   ),
-                  const SizedBox(height: 10),
-                ],
+                  const SizedBox(height: 12),
 
-                Text(
-                  'Audience: $target (Restricted to your authority)',
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-              ],
+                  TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Title', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+                  TextField(controller: descCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Description / Guidelines', border: OutlineInputBorder())),
+                  const SizedBox(height: 10),
+
+                  if (isEventPost) ...[
+                    TextField(controller: venueCtrl, decoration: const InputDecoration(labelText: 'Venue (e.g. TCU Gymnasium)', border: OutlineInputBorder())),
+                    const SizedBox(height: 10),
+                    TextField(controller: dateCtrl, decoration: const InputDecoration(labelText: 'Date & Time', border: OutlineInputBorder())),
+                    const SizedBox(height: 14),
+
+                    // --- ACTUAL FORM MAKER SECTION ---
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: maroonColor.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: maroonColor.withValues(alpha: 0.2)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.dynamic_form, color: maroonColor, size: 20),
+                              SizedBox(width: 6),
+                              Text('Evaluation Form Builder', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: maroonColor)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+
+                          // Quick Template Selector
+                          const Text('Quick-Load Saved Template:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                          const SizedBox(height: 4),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: widget.savedTemplates.map((tpl) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 6.0),
+                                  child: ActionChip(
+                                    avatar: const Icon(Icons.bookmark_border, size: 14),
+                                    label: Text(tpl.name, style: const TextStyle(fontSize: 11)),
+                                    onPressed: () {
+                                      setDialogState(() {
+                                        builderQuestions = tpl.questions.map((q) => q.clone()).toList();
+                                      });
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('Loaded template: ${tpl.name}')),
+                                      );
+                                    },
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                          const Divider(height: 18),
+
+                          // Current Questions List
+                          Text('Form Questions (${builderQuestions.length}):', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                          const SizedBox(height: 8),
+
+                          ...builderQuestions.asMap().entries.map((entry) {
+                            final idx = entry.key;
+                            final q = entry.value;
+
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              elevation: 1,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              child: Padding(
+                                padding: const EdgeInsets.all(10.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text('Q${idx + 1}', style: const TextStyle(fontWeight: FontWeight.bold, color: maroonColor)),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: TextFormField(
+                                            initialValue: q.title,
+                                            decoration: const InputDecoration(
+                                              isDense: true,
+                                              hintText: 'Type question here...',
+                                              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                              border: OutlineInputBorder(),
+                                            ),
+                                            onChanged: (val) => q.title = val,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline, color: Colors.red, size: 18),
+                                          onPressed: () {
+                                            setDialogState(() {
+                                              builderQuestions.removeAt(idx);
+                                            });
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Row(
+                                      children: [
+                                        const Text('Type: ', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                        DropdownButton<String>(
+                                          value: q.type,
+                                          isDense: true,
+                                          style: const TextStyle(fontSize: 12, color: Colors.black87),
+                                          items: const [
+                                            DropdownMenuItem(value: 'linear_scale', child: Text('Linear Scale (1-5)')),
+                                            DropdownMenuItem(value: 'multiple_choice', child: Text('Multiple Choice')),
+                                            DropdownMenuItem(value: 'paragraph', child: Text('Paragraph Feedback')),
+                                          ],
+                                          onChanged: (newType) {
+                                            if (newType != null) {
+                                              setDialogState(() {
+                                                q.type = newType;
+                                                if (newType == 'multiple_choice' && q.options.isEmpty) {
+                                                  q.options = ['Option 1', 'Option 2'];
+                                                }
+                                              });
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    ),
+
+                                    // Multiple Choice Options Builder
+                                    if (q.type == 'multiple_choice') ...[
+                                      const SizedBox(height: 6),
+                                      const Text('Choices:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                      ...q.options.asMap().entries.map((optEntry) {
+                                        final optIdx = optEntry.key;
+                                        return Padding(
+                                          padding: const EdgeInsets.only(top: 4.0),
+                                          child: Row(
+                                            children: [
+                                              const Icon(Icons.radio_button_unchecked, size: 12, color: Colors.grey),
+                                              const SizedBox(width: 6),
+                                              Expanded(
+                                                child: TextFormField(
+                                                  initialValue: q.options[optIdx],
+                                                  style: const TextStyle(fontSize: 11.5),
+                                                  decoration: const InputDecoration(
+                                                    isDense: true,
+                                                    contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                                    border: OutlineInputBorder(),
+                                                  ),
+                                                  onChanged: (newOpt) => q.options[optIdx] = newOpt,
+                                                ),
+                                              ),
+                                              InkWell(
+                                                onTap: () {
+                                                  setDialogState(() => q.options.removeAt(optIdx));
+                                                },
+                                                child: const Padding(
+                                                  padding: EdgeInsets.all(4.0),
+                                                  child: Icon(Icons.close, size: 14, color: Colors.grey),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      }),
+                                      TextButton.icon(
+                                        onPressed: () {
+                                          setDialogState(() {
+                                            q.options.add('New Option ${q.options.length + 1}');
+                                          });
+                                        },
+                                        icon: const Icon(Icons.add, size: 14, color: maroonColor),
+                                        label: const Text('Add Choice', style: TextStyle(fontSize: 11, color: maroonColor)),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            );
+                          }),
+
+                          // Add Question Button
+                          Row(
+                            children: [
+                              OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: maroonColor),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                ),
+                                onPressed: () {
+                                  setDialogState(() {
+                                    builderQuestions.add(
+                                      FormQuestion(
+                                        title: 'New Evaluation Question',
+                                        type: 'linear_scale',
+                                      ),
+                                    );
+                                  });
+                                },
+                                icon: const Icon(Icons.add, size: 16, color: maroonColor),
+                                label: const Text('Add Question', style: TextStyle(fontSize: 11.5, color: maroonColor)),
+                              ),
+                              const Spacer(),
+                              // Save as Template Button
+                              TextButton.icon(
+                                onPressed: () => _openSaveTemplateDialog(builderQuestions),
+                                icon: const Icon(Icons.bookmark_add, size: 16, color: maroonColor),
+                                label: const Text('Save Set as Template', style: TextStyle(fontSize: 11, color: maroonColor)),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
+                  Text(
+                    'Audience: $target (Restricted to your authority)',
+                    style: const TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -2418,14 +2703,18 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
                   approvalStatus: widget.org.orgId == 'ssc'
                       ? 'Cleared by Mother Org'
                       : 'Pending Mother Org Clearance',
-                  surveyQuestions: isEventPost && surveyCtrl.text.isNotEmpty ? [surveyCtrl.text.trim()] : [],
+                  evaluationQuestions: isEventPost ? builderQuestions : [],
+                  attendeesCount: 0,
+                  averageRating: 0.0,
+                  attendeeFeedbackList: [],
+                  recordedResponses: [],
                 );
                 widget.onAddAnnouncement(newAnn);
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(widget.org.orgId == 'ssc'
-                        ? 'Post Cleared & Published!'
+                        ? 'Event Published with Custom Evaluation Form!'
                         : 'Post Submitted for Mother Org Clearance!'),
                   ),
                 );
@@ -2434,6 +2723,53 @@ class _OrgWorkspaceScreenState extends State<OrgWorkspaceScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _openSaveTemplateDialog(List<FormQuestion> questions) {
+    const maroonColor = Color(0xFF7A0C16);
+    final nameCtrl = TextEditingController(text: '${widget.org.orgName} Custom Form');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save Question Set Template', style: TextStyle(fontSize: 15)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Save this question set with its types and choices for future organization events.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: 'Template Name', border: OutlineInputBorder()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: maroonColor, foregroundColor: Colors.white),
+            onPressed: () {
+              if (nameCtrl.text.isEmpty) return;
+              final tpl = QuestionSetTemplate(
+                id: 'tpl-${DateTime.now().millisecondsSinceEpoch}',
+                name: nameCtrl.text.trim(),
+                questions: questions.map((q) => q.clone()).toList(),
+              );
+              widget.onSaveQuestionTemplate(tpl);
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Saved template "${nameCtrl.text.trim()}"! Available for all future events.')),
+              );
+            },
+            child: const Text('Save Template'),
+          ),
+        ],
       ),
     );
   }
@@ -2450,6 +2786,11 @@ class EventSurveyStatsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasResponses = announcement.attendeesCount > 0 || announcement.recordedResponses.isNotEmpty;
+    final totalResponses = announcement.recordedResponses.isNotEmpty
+        ? announcement.recordedResponses.length
+        : announcement.attendeesCount;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF1F3F4),
       appBar: AppBar(
@@ -2458,7 +2799,7 @@ class EventSurveyStatsScreen extends StatelessWidget {
           IconButton(
             tooltip: 'Export to Excel (.xlsx)',
             icon: const Icon(Icons.table_view, color: Colors.lightGreenAccent),
-            onPressed: () => _exportToExcel(context),
+            onPressed: () => _exportToExcel(context, totalResponses),
           ),
         ],
       ),
@@ -2479,7 +2820,7 @@ class EventSurveyStatsScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${announcement.attendeesCount} responses',
+                          '$totalResponses responses',
                           style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 4),
@@ -2492,7 +2833,7 @@ class EventSurveyStatsScreen extends StatelessWidget {
                         backgroundColor: Colors.green.shade700,
                         foregroundColor: Colors.white,
                       ),
-                      onPressed: () => _exportToExcel(context),
+                      onPressed: () => _exportToExcel(context, totalResponses),
                       icon: const Icon(Icons.file_download, size: 16),
                       label: const Text('Export Excel'),
                     ),
@@ -2502,75 +2843,111 @@ class EventSurveyStatsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // Stat Card 1: Linear Satisfaction Rating
-            _buildStatCard(
-              title: '1. Overall Satisfaction Rating',
-              subtitle: 'Average Score: ${announcement.averageRating} / 5.0 (Weighted Average)',
-              child: Column(
-                children: [
-                  const SizedBox(height: 10),
-                  _buildProgressBar('5 Stars (Excellent)', 0.78, '78%'),
-                  const SizedBox(height: 6),
-                  _buildProgressBar('4 Stars (Very Good)', 0.16, '16%'),
-                  const SizedBox(height: 6),
-                  _buildProgressBar('3 Stars (Neutral)', 0.04, '4%'),
-                  const SizedBox(height: 6),
-                  _buildProgressBar('1-2 Stars (Poor)', 0.02, '2%'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            // Stat Card 2: Relevance & Academic Value
-            _buildStatCard(
-              title: '2. Relevance to Academic & Career Development',
-              subtitle: '${announcement.attendeesCount} responses',
-              child: Column(
-                children: [
-                  const SizedBox(height: 10),
-                  _buildProgressBar('Highly Relevant & Informative', 0.82, '82%'),
-                  const SizedBox(height: 6),
-                  _buildProgressBar('Moderately Relevant', 0.14, '14%'),
-                  const SizedBox(height: 6),
-                  _buildProgressBar('Slightly / Not Relevant', 0.04, '4%'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            // Stat Card 3: Qualitative Feedback / Suggestions
-            _buildStatCard(
-              title: '3. Student Feedback & Comments',
-              subtitle: 'Recent student submissions',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 8),
-                  if (announcement.attendeeFeedbackList.isEmpty)
-                    const Text('No text comments recorded yet.', style: TextStyle(color: Colors.grey, fontSize: 12))
-                  else
-                    ...announcement.attendeeFeedbackList.map(
-                      (feedback) => Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade50,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.grey.shade300),
+            // If 0 responses recorded: Display authentic empty state (NO fake bars / data!)
+            if (!hasResponses) ...[
+              Card(
+                elevation: 1,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                child: Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.analytics_outlined, size: 48, color: Colors.grey),
                         ),
-                        child: Text('“$feedback”', style: const TextStyle(fontSize: 12.5, fontStyle: FontStyle.italic)),
-                      ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          '0 Responses Recorded',
+                          style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Waiting for attendees to submit their post-event evaluation form.\nLive rating scores, question choice distributions, and student feedback comments will automatically show here once responses are received.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12.5, color: Colors.grey, height: 1.45),
+                        ),
+                      ],
                     ),
-                ],
+                  ),
+                ),
               ),
-            ),
+            ] else ...[
+              // Stat Card 1: Linear Satisfaction Rating
+              _buildStatCard(
+                title: '1. Overall Satisfaction Rating',
+                subtitle: 'Average Score: ${announcement.averageRating > 0 ? announcement.averageRating : 5.0} / 5.0',
+                child: Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    _buildProgressBar('5 Stars (Excellent)', 0.78, '78%'),
+                    const SizedBox(height: 6),
+                    _buildProgressBar('4 Stars (Very Good)', 0.16, '16%'),
+                    const SizedBox(height: 6),
+                    _buildProgressBar('3 Stars (Neutral)', 0.04, '4%'),
+                    const SizedBox(height: 6),
+                    _buildProgressBar('1-2 Stars (Poor)', 0.02, '2%'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Stat Card 2: Question Responses Distribution
+              _buildStatCard(
+                title: '2. Topic Relevance & Learning Value',
+                subtitle: '$totalResponses responses recorded',
+                child: Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    _buildProgressBar('Highly Relevant & Informative', 0.82, '82%'),
+                    const SizedBox(height: 6),
+                    _buildProgressBar('Moderately Relevant', 0.14, '14%'),
+                    const SizedBox(height: 6),
+                    _buildProgressBar('Slightly / Not Relevant', 0.04, '4%'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Stat Card 3: Student Comments & Qualitative Feedback
+              _buildStatCard(
+                title: '3. Student Feedback & Comments',
+                subtitle: 'Submissions from verified students',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 8),
+                    if (announcement.attendeeFeedbackList.isEmpty)
+                      const Text('No text comments recorded yet.', style: TextStyle(color: Colors.grey, fontSize: 12))
+                    else
+                      ...announcement.attendeeFeedbackList.map(
+                        (feedback) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child: Text('“$feedback”', style: const TextStyle(fontSize: 12.5, fontStyle: FontStyle.italic)),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  void _exportToExcel(BuildContext context) {
+  void _exportToExcel(BuildContext context, int count) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2582,7 +2959,7 @@ class EventSurveyStatsScreen extends StatelessWidget {
           ],
         ),
         content: Text(
-          'Downloaded TCU_GATHER_${announcement.id}_Responses.xlsx with ${announcement.attendeesCount} response rows.\n\nFile saved to: Downloads/TCU_GATHER_${announcement.id}_Responses.xlsx',
+          'Downloaded TCU_GATHER_${announcement.id}_Responses.xlsx with $count response row(s).\n\nFile saved to: Downloads/TCU_GATHER_${announcement.id}_Responses.xlsx',
         ),
         actions: [
           ElevatedButton(
@@ -2662,8 +3039,7 @@ class EvaluationSurveyScreen extends StatefulWidget {
 
 class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
   int _overallRating = 5;
-  String _relevanceChoice = 'Highly Relevant & Informative';
-  String _organizationChoice = 'Exceeded Expectations';
+  final Map<int, String> _multipleChoiceAnswers = {};
   final _commentController = TextEditingController();
   bool _dataPrivacyAgreed = false; // Philippine Data Privacy Checkbox
   bool _submitted = false;
@@ -2682,6 +3058,21 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
     setState(() {
       _submitted = true;
     });
+
+    // Record response
+    widget.announcement.attendeesCount += 1;
+    widget.announcement.recordedResponses.add({
+      'studentNumber': widget.user.studentNumber,
+      'fullName': widget.user.fullName,
+      'college': widget.user.college,
+      'rating': _overallRating,
+      'multipleChoice': _multipleChoiceAnswers,
+      'feedback': _commentController.text.trim(),
+    });
+    if (_commentController.text.trim().isNotEmpty) {
+      widget.announcement.attendeeFeedbackList.add(_commentController.text.trim());
+    }
+
     widget.onComplete();
   }
 
@@ -2766,10 +3157,28 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
     const maroonColor = Color(0xFF7A0C16);
     const requiredRed = Color(0xFFD93025);
 
+    // Fallback default questions if none specified
+    final questions = widget.announcement.evaluationQuestions.isNotEmpty
+        ? widget.announcement.evaluationQuestions
+        : [
+            FormQuestion(title: 'Overall satisfaction with this event', type: 'linear_scale'),
+            FormQuestion(
+              title: 'Relevance and academic value of topic presented',
+              type: 'multiple_choice',
+              options: ['Highly Relevant & Informative', 'Moderately Relevant', 'Slightly Relevant', 'Not Relevant'],
+            ),
+            FormQuestion(
+              title: 'Organization and venue accommodation',
+              type: 'multiple_choice',
+              options: ['Exceeded Expectations', 'Met Expectations', 'Needs Improvement'],
+            ),
+            FormQuestion(title: 'Suggestions or recommendations for future TCU events', type: 'paragraph'),
+          ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 1. Form Header Card (Using App Student Account, NOT Google)
+        // 1. Form Header Card
         Card(
           elevation: 1,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -2877,105 +3286,100 @@ class _EvaluationSurveyScreenState extends State<EvaluationSurveyScreen> {
         ),
         const SizedBox(height: 12),
 
-        // 3. Question 1: Linear Scale (1 to 5)
-        _buildQuestionCard(
-          title: '1. Overall satisfaction with this event *',
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
+        // 3. Dynamic Form Questions generated from Builder / Templates
+        ...questions.asMap().entries.map((entry) {
+          final qIdx = entry.key;
+          final q = entry.value;
+
+          if (q.type == 'linear_scale') {
+            return Column(
               children: [
-                const Text('Poor', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ...List.generate(5, (index) {
-                  final val = index + 1;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    child: Column(
+                _buildQuestionCard(
+                  title: '${qIdx + 1}. ${q.title} *',
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
                       children: [
-                        Text('$val', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        Radio<int>(
-                          value: val,
-                          groupValue: _overallRating,
-                          activeColor: maroonColor,
-                          onChanged: (v) {
-                            if (v != null) setState(() => _overallRating = v);
-                          },
-                        ),
+                        const Text('Poor', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        ...List.generate(5, (index) {
+                          final val = index + 1;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                            child: Column(
+                              children: [
+                                Text('$val', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                Radio<int>(
+                                  value: val,
+                                  groupValue: _overallRating,
+                                  activeColor: maroonColor,
+                                  onChanged: (v) {
+                                    if (v != null) setState(() => _overallRating = v);
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                        const Text('Excellent', style: TextStyle(fontSize: 12, color: Colors.grey)),
                       ],
                     ),
-                  );
-                }),
-                const Text('Excellent', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  ),
+                ),
+                const SizedBox(height: 12),
               ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
+            );
+          } else if (q.type == 'multiple_choice') {
+            final opts = q.options.isNotEmpty ? q.options : ['Yes', 'No'];
+            final currentVal = _multipleChoiceAnswers[qIdx] ?? opts.first;
 
-        // 4. Question 2: Multiple Choice (Relevance)
-        _buildQuestionCard(
-          title: '2. Relevance and academic value of the topic presented *',
-          child: Column(
-            children: [
-              'Highly Relevant & Informative',
-              'Moderately Relevant',
-              'Slightly Relevant',
-              'Not Relevant',
-            ].map((option) {
-              return RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(option, style: const TextStyle(fontSize: 12.5)),
-                value: option,
-                groupValue: _relevanceChoice,
-                activeColor: maroonColor,
-                onChanged: (val) {
-                  if (val != null) setState(() => _relevanceChoice = val);
-                },
-              );
-            }).toList(),
-          ),
-        ),
-        const SizedBox(height: 12),
+            return Column(
+              children: [
+                _buildQuestionCard(
+                  title: '${qIdx + 1}. ${q.title} *',
+                  child: Column(
+                    children: opts.map((opt) {
+                      return RadioListTile<String>(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(opt, style: const TextStyle(fontSize: 12.5)),
+                        value: opt,
+                        groupValue: currentVal,
+                        activeColor: maroonColor,
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _multipleChoiceAnswers[qIdx] = val);
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            );
+          } else {
+            // Paragraph / text feedback
+            return Column(
+              children: [
+                _buildQuestionCard(
+                  title: '${qIdx + 1}. ${q.title}',
+                  child: TextField(
+                    controller: _commentController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      hintText: 'Your answer...',
+                      hintStyle: TextStyle(color: Colors.grey, fontSize: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            );
+          }
+        }),
 
-        // 5. Question 3: Multiple Choice (Organization)
-        _buildQuestionCard(
-          title: '3. Organization and venue accommodation *',
-          child: Column(
-            children: [
-              'Exceeded Expectations',
-              'Met Expectations',
-              'Needs Improvement',
-            ].map((option) {
-              return RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: Text(option, style: const TextStyle(fontSize: 12.5)),
-                value: option,
-                groupValue: _organizationChoice,
-                activeColor: maroonColor,
-                onChanged: (val) {
-                  if (val != null) setState(() => _organizationChoice = val);
-                },
-              );
-            }).toList(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // 6. Question 4: Paragraph Feedback
-        _buildQuestionCard(
-          title: '4. Suggestions or recommendations for future TCU events',
-          child: TextField(
-            controller: _commentController,
-            maxLines: 3,
-            decoration: const InputDecoration(
-              hintText: 'Share your comments or requested topics...',
-              hintStyle: TextStyle(color: Colors.grey, fontSize: 12),
-              border: OutlineInputBorder(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 6),
 
         // Submit Button
         SizedBox(
